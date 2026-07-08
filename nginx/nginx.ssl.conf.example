@@ -1,0 +1,39 @@
+# Config depois que o certbot já emitiu o certificado (ver
+# docs/DEPLOY_VPS.md). Copie por cima de nginx.conf e reinicie o serviço
+# nginx (`docker compose restart nginx`) — troque <DOMINIO> pelo domínio
+# de verdade (ex: seu-ip.sslip.io, ou o domínio próprio se comprarem um).
+server {
+    listen 80;
+    server_name <DOMINIO>;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    # Todo o resto do tráfego HTTP redireciona pra HTTPS
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name <DOMINIO>;
+
+    ssl_certificate /etc/letsencrypt/live/<DOMINIO>/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/<DOMINIO>/privkey.pem;
+
+    location / {
+        root /usr/share/nginx/html;
+        index index.html;
+        try_files $uri $uri/ /index.html;
+    }
+
+    location ~ ^/(auth|admin|portais|dlq|pedidos|lotes)(/|$) {
+        proxy_pass http://gateway:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

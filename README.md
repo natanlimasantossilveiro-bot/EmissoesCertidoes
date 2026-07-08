@@ -37,32 +37,50 @@ docker compose up --build
 - Gateway: http://localhost:8000/docs (Swagger automático do FastAPI)
 - RabbitMQ management: http://localhost:15672 (guest/guest)
 - Front: abra `front/index.html` direto no navegador (não precisa de
-  servidor nem build — é uma página só, HTML+JS puro). Se o Gateway
-  estiver em outro host/porta, ajuste no campo "Gateway" no topo da
-  página. Se `GATEWAY_API_KEY` estiver configurada (ver abaixo), preencha
-  também o campo "API Key" — sem ela, toda chamada volta 401. Cria
-  pedidos, envia planilha, e acompanha o status em tempo real (atualiza
-  sozinho a cada 5s, com contadores de total/andamento/sucesso/erro).
-  Cada portal mostra um selo de confiabilidade (✅ validado / 🟡 parcial /
-  🧪 sem status catalogado ainda) — mantido manualmente em
-  `STATUS_PORTAL` no próprio HTML, a partir do que já foi validado em
-  `docs/CATALOGO_PORTAIS.md`. Ainda é uma página única sem multiusuário
-  de verdade (todo mundo usa a mesma chave) — o suficiente pra testes
-  internos e demonstração, não pra produção no escritório.
+  servidor nem build — é uma página só, HTML+JS puro). Pede login
+  (e-mail/senha) antes de mostrar qualquer coisa — ver "Autenticação"
+  abaixo pra saber como logar na primeira vez. Se o Gateway estiver em
+  outro host/porta, ajuste em "Gateway em outro endereço?" (dentro do
+  details da tela de login). Cria pedidos, envia planilha, e acompanha o
+  status em tempo real (atualiza sozinho a cada 5s, com contadores de
+  total/andamento/sucesso/erro). Cada portal mostra um selo de
+  confiabilidade (✅ validado / 🟡 parcial / 🧪 sem status catalogado
+  ainda) — mantido manualmente em `STATUS_PORTAL` no próprio HTML, a
+  partir do que já foi validado em `docs/CATALOGO_PORTAIS.md`.
+- `front/admin.html`: painel de administração (só acessível a quem logou
+  como admin) — criar/desativar colaboradores, resetar senha, e ver
+  atividade (último acesso e pedidos de cada um).
 
-### Autenticação do Gateway
+### Autenticação (login multiusuário)
 
-O Gateway aceita um header `X-API-Key` em toda chamada. Configure
-`GATEWAY_API_KEY` no `.env` (gere uma com `openssl rand -hex 24` ou
-similar) — **se deixar em branco, a checagem é pulada** (só pra
-facilitar dev local, nunca deixe assim se o Gateway ficar acessível além
-da sua máquina). O front tem um campo "API Key" ao lado do "Gateway" pra
-mandar esse header automaticamente.
+Cada colaborador tem sua própria conta (e-mail + senha), com papel
+`admin` ou `colaborador`. Login via `POST /auth/login` devolve um token
+JWT que o front manda em `Authorization: Bearer <token>` em toda chamada
+— configure `JWT_SECRET_KEY` no `.env` (gere com `openssl rand -hex 32`,
+**obrigatória**, sem ela ninguém consegue logar).
+
+**Primeiro acesso**: com o banco vazio, configure `ADMIN_EMAIL` e
+`ADMIN_SENHA_INICIAL` no `.env` — o Gateway cria essa conta admin
+automaticamente no primeiro boot. Depois de logar a primeira vez, troque
+essa senha pelo link "Trocar senha" no topo do painel, e crie os demais
+colaboradores pelo `admin.html`.
+
+Só o admin cria contas (`POST /admin/usuarios`) — não tem cadastro
+aberto nem "esqueci minha senha" self-service (admin reseta a senha de
+qualquer colaborador direto pelo painel).
 
 ## Testando o fluxo unitário
 
 ```bash
+# 1. Login — pega o token
+TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "SEU_ADMIN_EMAIL", "senha": "SUA_SENHA"}' \
+  | python3 -c "import sys, json; print(json.load(sys.stdin)['access_token'])")
+
+# 2. Cria o pedido usando o token
 curl -X POST http://localhost:8000/pedidos \
+  -H "Authorization: Bearer $TOKEN" \
   -F "portal=receita_federal" \
   -F "nome=Fulano de Tal" \
   -F "tipo=pf" \
@@ -73,7 +91,7 @@ curl -X POST http://localhost:8000/pedidos \
 Isso retorna um `pedido_id`. Consulte o andamento com:
 
 ```bash
-curl http://localhost:8000/pedidos/<pedido_id>
+curl http://localhost:8000/pedidos/<pedido_id> -H "Authorization: Bearer $TOKEN"
 ```
 
 ## Como adicionar um novo portal (ex: Prefeitura de Pinhais / Atende.Net)
@@ -102,17 +120,25 @@ tocar em nada que já existe**. Passo a passo:
       amigáveis na tabela em vez do slug interno) — testado num
       navegador real (Chromium via nodriver), não só revisado por
       leitura de código
-- [ ] Front "de verdade", pensado pro uso do escritório (autenticação,
-      multiusuário, produção — o atual ainda é só uma página estática
-      sem servidor próprio)
-- [x] Autenticação simples no Gateway (header `X-API-Key`, via
-      `GATEWAY_API_KEY` no `.env` — vazio desativa a checagem, pra não
-      travar dev local). Testado de ponta a ponta num navegador real:
-      sem chave → 401, chave errada → 401, chave certa → 200. O caso mais
-      arriscado (o botão "Baixar relatório", que usa um link puro sem
-      controle de header) foi corrigido pra buscar via `fetch` + blob em
-      vez de `<a href download>`, que não consegue mandar headers
-      customizados
+- [x] **Login multiusuário + painel de administração + deploy em VPS**
+      (substitui a autenticação por chave única): tabela `Usuario`
+      (nome, e-mail, senha com hash bcrypt, papel admin/colaborador,
+      `ultimo_acesso_em`), login via JWT (`POST /auth/login`), bootstrap
+      automático do primeiro admin a partir do `.env` no primeiro boot
+      com banco vazio, endpoint pra trocar a própria senha
+      (`PATCH /auth/me/senha`), e `/admin/usuarios` + `/admin/atividade`
+      (pedidos por colaborador, protegidos por papel). `PedidoCertidao`
+      e `LotePlanilha` trocaram o campo livre `solicitado_por` por
+      `usuario_id` (FK), preenchido automaticamente por quem está
+      logado. Front ganhou tela de login (`front/index.html`) e um
+      painel de admin novo (`front/admin.html`) — tudo testado de ponta
+      a ponta num navegador real: login certo/errado, criar colaborador,
+      colaborador recebendo 403 em rota de admin, desativar usuário e
+      confirmar que ele não consegue mais logar. `docker-compose.yml`
+      ganhou `restart: unless-stopped` em todos os serviços e volume
+      persistente pro RabbitMQ (antes perdia filas/DLQ a cada reinício).
+      Guia completo de deploy em VPS (Hostinger, Nginx, HTTPS via
+      Certbot/sslip.io) em `docs/DEPLOY_VPS.md`
 - [x] Endpoint de relatório consolidado por lote (`GET /lotes/{lote_id}/relatorio`,
       `.xlsx` com uma linha por pedido: nome, documento, tipo, status
       traduzido, mensagem, nomes dos arquivos de certidão/evidência,
@@ -134,6 +160,24 @@ tocar em nada que já existe**. Passo a passo:
       navegador real com mensagens reais na DLQ (deixadas por falhas de
       teste anteriores nesta mesma sessão)
 - [ ] Migrar o worker do Atende.Net a partir do `SsaMonitorProcessos`
+- [x] **Reteste dos portais bloqueados por WAF**: TRT9, MPF, MPT, FGTS e
+      Prefeitura de Curitiba (CND) continuam bloqueados, confirmado com
+      navegador real (não só `curl`, que mostrava HTTP 200 enganoso — os
+      WAFs devolvem a própria tela de bloqueio com status 200). SEFAZ PR
+      mudou: a landing page passou a carregar sem bloqueio de borda —
+      levou à construção do worker abaixo
+- [x] Suporte a **reCAPTCHA Enterprise** adicionado ao módulo de captcha
+      (`resolver_recaptcha_enterprise`) e hook de interceptação de
+      callback (`HOOK_SCRIPT_RECAPTCHA_ENTERPRISE_CALLBACK`, análogo ao
+      já existente pra hCaptcha) no `AutomacaoNodriverBase`
+- [ ] Worker do **SEFAZ PR** construído (`worker-sefaz-pr`), mas
+      **bloqueado num ponto anterior ao do CNPJ+QSA**: testado com
+      captcha real (3 tentativas via retry automático) e o próprio
+      2captcha devolveu `ERROR_CAPTCHA_UNSOLVABLE` — não é rejeição do
+      portal, é o serviço de resolução não conseguindo nem gerar um token
+      pra esse reCAPTCHA Enterprise específico. Não depende de código
+      nosso; precisaria de outro provedor de captcha especializado em
+      Enterprise pra ter alguma chance
 - [x] **Passada de regressão** (`docker compose down` + `up --build` do
       zero, depois retestando os 5 portais validados um por um com
       captcha/dado real): encontradas e corrigidas 3 regressões reais

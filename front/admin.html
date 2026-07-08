@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Certidões — Painel de Administração</title>
+<style>
+  :root {
+    --bg: #eef1f6; --card: #ffffff; --border: #e2e5ec;
+    --text: #1c2130; --text-muted: #6b7280;
+    --primary: #2f5fd7; --primary-dark: #23479f; --primary-bg: #eaf0ff;
+    --ok: #17874a; --ok-bg: #e4f7ec;
+    --warn: #9a6400; --warn-bg: #fdf3df;
+    --err: #b23324; --err-bg: #fbe9e7;
+    --neutral: #6b7280; --neutral-bg: #eef0f3;
+    --radius: 12px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); }
+  .app-header {
+    background: linear-gradient(120deg, var(--primary-dark), var(--primary));
+    color: #fff; padding: 22px 28px;
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 14px;
+  }
+  .app-header .brand { display: flex; align-items: center; gap: 12px; }
+  .app-header .brand-icon {
+    width: 40px; height: 40px; border-radius: 10px; background: rgba(255,255,255,.15);
+    display: flex; align-items: center; justify-content: center; font-size: 1.3rem;
+  }
+  .app-header h1 { font-size: 1.25rem; margin: 0; line-height: 1.3; }
+  .app-header .subtitle { font-size: .82rem; color: rgba(255,255,255,.85); margin: 2px 0 0; }
+  .user-box { display: flex; gap: 10px; align-items: center; font-size: .85rem; color: #fff; }
+  .user-box a.link-voltar { color: #fff; font-size: .8rem; text-decoration: underline; }
+  .user-box button.sair { background: rgba(255,255,255,.15); color: #fff; margin: 0; padding: 6px 12px; font-size: .8rem; }
+  .user-box button.sair:hover { background: rgba(255,255,255,.28); }
+
+  main { padding: 24px 28px 40px; max-width: 1200px; margin: 0 auto; }
+  h2 { font-size: 1rem; margin: 0 0 4px; }
+  .card-desc { color: var(--text-muted); font-size: .8rem; margin: 0 0 16px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 20px 22px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(20, 25, 40, .04);
+  }
+  label { display: block; font-size: .78rem; font-weight: 600; margin: 14px 0 5px; color: var(--text-muted); }
+  label:first-of-type { margin-top: 0; }
+  input, select {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--border);
+    border-radius: 7px; font-size: .88rem; background: #fff; color: var(--text);
+  }
+  input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
+  button {
+    cursor: pointer; border: none; border-radius: 7px; padding: 10px 18px;
+    font-size: .88rem; font-weight: 600; background: var(--primary); color: #fff;
+    margin-top: 16px; transition: background .15s;
+  }
+  button:hover { background: var(--primary-dark); }
+  button.secondary { background: var(--neutral-bg); color: var(--text); }
+  button.secondary:hover { background: var(--border); }
+  button.small { margin: 0; padding: 5px 10px; font-size: .74rem; }
+  .msg { font-size: .82rem; margin-top: 10px; padding: 9px 11px; border-radius: 7px; display: none; }
+  .msg.show { display: block; }
+  .msg.ok { background: var(--ok-bg); color: var(--ok); }
+  .msg.err { background: var(--err-bg); color: var(--err); }
+
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--text-muted); font-weight: 600; font-size: .74rem; text-transform: uppercase; letter-spacing: .02em; }
+  tr:last-child td { border-bottom: none; }
+  .mono { font-family: "SF Mono", Consolas, monospace; font-size: .78rem; color: var(--text-muted); }
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 999px;
+    font-size: .74rem; font-weight: 700; white-space: nowrap;
+  }
+  .badge.ativo { background: var(--ok-bg); color: var(--ok); }
+  .badge.inativo { background: var(--err-bg); color: var(--err); }
+  .badge.nunca { background: var(--neutral-bg); color: var(--neutral); }
+  .badge.admin { background: var(--primary-bg); color: var(--primary-dark); }
+  .badge.colaborador { background: var(--neutral-bg); color: var(--text-muted); }
+  .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .pedidos-recentes { font-size: .78rem; color: var(--text-muted); margin-top: 6px; }
+  .pedidos-recentes div { padding: 2px 0; }
+  .empty { color: var(--text-muted); font-size: .85rem; padding: 24px 0; text-align: center; }
+  footer { text-align: center; color: var(--text-muted); font-size: .76rem; padding: 18px 0 30px; }
+</style>
+</head>
+<body>
+
+<div class="app-header">
+  <div class="brand">
+    <div class="brand-icon">🛠️</div>
+    <div>
+      <h1>Painel de Administração</h1>
+      <p class="subtitle">Criar colaboradores, controlar acesso e ver atividade por usuário.</p>
+    </div>
+  </div>
+  <div class="user-box">
+    <span id="userNome"></span>
+    <a class="link-voltar" href="index.html">← Voltar pro painel</a>
+    <button class="sair" id="btnSair">Sair</button>
+  </div>
+</div>
+
+<main>
+  <div class="card">
+    <h2>Criar colaborador</h2>
+    <p class="card-desc">A senha inicial pode ser trocada pelo próprio colaborador depois (peça pra ele avisar, ainda não tem "esqueci minha senha" self-service).</p>
+
+    <label for="c-nome">Nome</label>
+    <input id="c-nome" type="text" placeholder="Fulano de Tal">
+
+    <label for="c-email">E-mail</label>
+    <input id="c-email" type="email" placeholder="fulano@escritorio.com.br">
+
+    <label for="c-senha">Senha inicial</label>
+    <input id="c-senha" type="text" placeholder="mínimo 8 caracteres">
+
+    <label for="c-papel">Papel</label>
+    <select id="c-papel">
+      <option value="colaborador">Colaborador</option>
+      <option value="admin">Administrador</option>
+    </select>
+
+    <button id="btnCriarUsuario">Criar usuário</button>
+    <div class="msg" id="msgCriarUsuario"></div>
+  </div>
+
+  <div class="card">
+    <h2>Usuários e atividade</h2>
+    <p class="card-desc">Quem já acessou (e quando), e quantos pedidos cada um criou. Atualiza ao recarregar a página.</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Nome</th>
+          <th>E-mail</th>
+          <th>Papel</th>
+          <th>Status</th>
+          <th>Último acesso</th>
+          <th>Pedidos</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="tabelaUsuarios"></tbody>
+    </table>
+    <div class="empty" id="listaVazia" style="display:none">Nenhum usuário cadastrado ainda.</div>
+  </div>
+</main>
+
+<footer>EmissoesCertidoes — painel de administração, acesso restrito.</footer>
+
+<script>
+const STORAGE_GATEWAY_KEY = "certidoes_gateway_url";
+const STORAGE_TOKEN_KEY = "certidoes_token";
+const STORAGE_USUARIO_KEY = "certidoes_usuario";
+
+const el = (id) => document.getElementById(id);
+
+function gatewayUrl() {
+  return (localStorage.getItem(STORAGE_GATEWAY_KEY) || "http://127.0.0.1:8001").replace(/\/$/, "");
+}
+
+function token() {
+  return localStorage.getItem(STORAGE_TOKEN_KEY) || "";
+}
+
+function usuarioAtual() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_USUARIO_KEY) || "null");
+  } catch {
+    return null;
+  }
+}
+
+function fazerLogout() {
+  localStorage.removeItem(STORAGE_TOKEN_KEY);
+  localStorage.removeItem(STORAGE_USUARIO_KEY);
+  window.location.href = "index.html";
+}
+
+el("btnSair").addEventListener("click", fazerLogout);
+
+async function fetchAutenticado(url, opcoes = {}) {
+  const resp = await fetch(url, {
+    ...opcoes,
+    headers: { ...(opcoes.headers || {}), "Authorization": `Bearer ${token()}` },
+  });
+  if (resp.status === 401 || resp.status === 403) {
+    // Sem token, token expirado, ou não é admin — nenhum dos casos tem
+    // o que fazer nessa página, manda pro painel principal.
+    window.location.href = "index.html";
+  }
+  return resp;
+}
+
+function mostrarMsg(elemento, texto, tipo) {
+  elemento.textContent = texto;
+  elemento.className = "msg show " + tipo;
+  setTimeout(() => elemento.classList.remove("show"), 6000);
+}
+
+function badgeStatus(usuario) {
+  return usuario.ativo
+    ? '<span class="badge ativo">Ativo</span>'
+    : '<span class="badge inativo">Desativado</span>';
+}
+
+function formatarData(iso) {
+  if (!iso) return '<span class="badge nunca">Nunca acessou</span>';
+  return new Date(iso).toLocaleString("pt-BR");
+}
+
+async function alternarAtivo(usuarioId, ativoAtual) {
+  await fetchAutenticado(`${gatewayUrl()}/admin/usuarios/${usuarioId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ativo: !ativoAtual }),
+  });
+  carregarAtividade();
+}
+
+async function resetarSenha(usuarioId) {
+  const novaSenha = prompt("Nova senha pra esse usuário (mínimo 8 caracteres):");
+  if (!novaSenha) return;
+  await fetchAutenticado(`${gatewayUrl()}/admin/usuarios/${usuarioId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ nova_senha: novaSenha }),
+  });
+  alert("Senha atualizada.");
+}
+
+function alternarDetalhes(usuarioId) {
+  const linha = el(`detalhes-${usuarioId}`);
+  linha.style.display = linha.style.display === "none" ? "table-row" : "none";
+}
+
+async function carregarAtividade() {
+  const resp = await fetchAutenticado(`${gatewayUrl()}/admin/atividade`);
+  if (!resp.ok) return;
+  const lista = await resp.json();
+
+  const corpo = el("tabelaUsuarios");
+  el("listaVazia").style.display = lista.length === 0 ? "block" : "none";
+
+  corpo.innerHTML = lista
+    .map(({ usuario, total_pedidos, pedidos_recentes }) => `
+      <tr>
+        <td>${usuario.nome}</td>
+        <td>${usuario.email}</td>
+        <td><span class="badge ${usuario.papel}">${usuario.papel === "admin" ? "Admin" : "Colaborador"}</span></td>
+        <td>${badgeStatus(usuario)}</td>
+        <td>${formatarData(usuario.ultimo_acesso_em)}</td>
+        <td>
+          ${total_pedidos}
+          ${total_pedidos > 0 ? `<button class="secondary small" onclick="alternarDetalhes('${usuario.id}')">ver</button>` : ""}
+        </td>
+        <td class="row-actions">
+          <button class="secondary small" onclick="alternarAtivo('${usuario.id}', ${usuario.ativo})">${usuario.ativo ? "Desativar" : "Ativar"}</button>
+          <button class="secondary small" onclick="resetarSenha('${usuario.id}')">Resetar senha</button>
+        </td>
+      </tr>
+      <tr id="detalhes-${usuario.id}" style="display:none">
+        <td colspan="7">
+          <div class="pedidos-recentes">
+            ${pedidos_recentes.map(p => `
+              <div><span class="mono">${p.criado_em ? new Date(p.criado_em).toLocaleString("pt-BR") : ""}</span> — ${p.nome} (${p.portal}) — ${p.status}</div>
+            `).join("")}
+          </div>
+        </td>
+      </tr>
+    `)
+    .join("");
+}
+
+el("btnCriarUsuario").addEventListener("click", async () => {
+  const nome = el("c-nome").value.trim();
+  const email = el("c-email").value.trim();
+  const senha = el("c-senha").value;
+  const papel = el("c-papel").value;
+  const msgEl = el("msgCriarUsuario");
+
+  if (!nome || !email || senha.length < 8) {
+    mostrarMsg(msgEl, "Preencha nome, e-mail, e uma senha com pelo menos 8 caracteres.", "err");
+    return;
+  }
+
+  try {
+    const resp = await fetchAutenticado(`${gatewayUrl()}/admin/usuarios`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nome, email, senha, papel }),
+    });
+    const dados = await resp.json();
+    if (!resp.ok) throw new Error(dados.detail || "Erro desconhecido");
+    mostrarMsg(msgEl, `Usuário "${nome}" criado.`, "ok");
+    el("c-nome").value = "";
+    el("c-email").value = "";
+    el("c-senha").value = "";
+    carregarAtividade();
+  } catch (erro) {
+    mostrarMsg(msgEl, `Falha: ${erro.message}`, "err");
+  }
+});
+
+(function init() {
+  if (!token()) {
+    window.location.href = "index.html";
+    return;
+  }
+  const usuario = usuarioAtual();
+  if (usuario) el("userNome").textContent = usuario.nome;
+  carregarAtividade();
+})();
+</script>
+</body>
+</html>

@@ -7,8 +7,8 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, String, DateTime, Enum, Text, Boolean, Integer, create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import Column, String, DateTime, Enum, Text, Boolean, Integer, ForeignKey, create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
 from certidoes_core.config import config
 
@@ -23,6 +23,31 @@ class StatusPedido(str, enum.Enum):
     ERRO_PORTAL = "erro_portal"          # portal recusou/erro de negócio (ex: Receita)
     ERRO_TECNICO = "erro_tecnico"        # captcha, timeout, portal fora do ar
     FALHA_INDEFINIDA = "falha_indefinida"
+
+
+class PapelUsuario(str, enum.Enum):
+    ADMIN = "admin"
+    COLABORADOR = "colaborador"
+
+
+class Usuario(Base):
+    __tablename__ = "usuarios"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    nome = Column(String(128), nullable=False)
+    email = Column(String(255), nullable=False, unique=True, index=True)
+    senha_hash = Column(String(255), nullable=False)
+    papel = Column(Enum(PapelUsuario), default=PapelUsuario.COLABORADOR, nullable=False)
+
+    # Desativar em vez de apagar — preserva o histórico de pedidos do
+    # colaborador mesmo depois que ele sai do escritório.
+    ativo = Column(Boolean, default=True, nullable=False)
+
+    criado_em = Column(DateTime, default=datetime.utcnow)
+    # None = nunca fez login — é exatamente o "quem não acessou" que o
+    # painel de admin precisa mostrar, sem precisar de uma tabela de
+    # histórico de login separada.
+    ultimo_acesso_em = Column(DateTime, nullable=True)
 
 
 class PedidoCertidao(Base):
@@ -58,7 +83,10 @@ class PedidoCertidao(Base):
     criado_em = Column(DateTime, default=datetime.utcnow)
     atualizado_em = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    solicitado_por = Column(String(128), nullable=True)     # usuário/advogado do front
+    # Quem criou o pedido — vem do login, não é mais digitado à mão no
+    # front. Também é a base do painel de "atividade por colaborador".
+    usuario_id = Column(String(36), ForeignKey("usuarios.id"), nullable=True, index=True)
+    usuario = relationship("Usuario")
 
 
 class LotePlanilha(Base):
@@ -69,7 +97,8 @@ class LotePlanilha(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     nome_arquivo_original = Column(String(255), nullable=True)
     total_linhas = Column(String(8), default="0")
-    solicitado_por = Column(String(128), nullable=True)
+    usuario_id = Column(String(36), ForeignKey("usuarios.id"), nullable=True, index=True)
+    usuario = relationship("Usuario")
     criado_em = Column(DateTime, default=datetime.utcnow)
 
 

@@ -67,6 +67,21 @@
   }
   .gateway-config button { margin: 0; }
 
+  .user-box {
+    display: flex; gap: 10px; align-items: center; font-size: .85rem;
+    color: #fff;
+  }
+  .user-box .nome { font-weight: 600; }
+  .user-box .papel {
+    font-size: .68rem; text-transform: uppercase; letter-spacing: .03em;
+    background: rgba(255,255,255,.18); padding: 2px 8px; border-radius: 999px;
+  }
+  .user-box a.link-admin { color: #fff; font-size: .8rem; text-decoration: underline; }
+  .user-box button.sair {
+    background: rgba(255,255,255,.15); color: #fff; margin: 0; padding: 6px 12px; font-size: .8rem;
+  }
+  .user-box button.sair:hover { background: rgba(255,255,255,.28); }
+
   main { padding: 24px 28px 40px; max-width: 1400px; margin: 0 auto; }
 
   h2 { font-size: 1rem; margin: 0 0 4px; }
@@ -203,10 +218,55 @@
     text-align: center; color: var(--text-muted); font-size: .76rem;
     padding: 18px 0 30px;
   }
+
+  /* Tela de login */
+  #loginScreen {
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, var(--primary-dark), var(--primary));
+    padding: 20px;
+  }
+  #loginScreen .login-card {
+    background: var(--card); border-radius: var(--radius); padding: 32px 30px;
+    width: 100%; max-width: 380px; box-shadow: 0 10px 30px rgba(0,0,0,.2);
+  }
+  #loginScreen .brand-icon {
+    width: 48px; height: 48px; border-radius: 12px; background: var(--primary-bg);
+    display: flex; align-items: center; justify-content: center; font-size: 1.5rem;
+    margin: 0 auto 14px;
+  }
+  #loginScreen h1 { font-size: 1.15rem; text-align: center; margin: 0 0 4px; }
+  #loginScreen p.subtitle { text-align: center; color: var(--text-muted); font-size: .82rem; margin: 0 0 22px; }
+  #loginScreen details { margin-top: 18px; font-size: .78rem; color: var(--text-muted); }
+  #loginScreen summary { cursor: pointer; }
+  #loginScreen details input { margin-top: 8px; }
 </style>
 </head>
 <body>
 
+<div id="loginScreen">
+  <div class="login-card">
+    <div class="brand-icon">📄</div>
+    <h1>Certidões — Painel de Emissão</h1>
+    <p class="subtitle">Entre com sua conta pra continuar.</p>
+
+    <label for="login-email">E-mail</label>
+    <input id="login-email" type="email" placeholder="voce@escritorio.com.br" autocomplete="username">
+
+    <label for="login-senha">Senha</label>
+    <input id="login-senha" type="password" placeholder="••••••••" autocomplete="current-password">
+
+    <button id="btnLogin" style="width:100%">Entrar</button>
+    <div class="msg" id="msgLogin"></div>
+
+    <details>
+      <summary>Gateway em outro endereço?</summary>
+      <label for="gatewayUrl" style="margin-top:8px">URL do Gateway</label>
+      <input id="gatewayUrl" type="text" value="http://127.0.0.1:8001">
+    </details>
+  </div>
+</div>
+
+<div id="appScreen" style="display:none">
 <div class="app-header">
   <div class="brand">
     <div class="brand-icon">📄</div>
@@ -215,12 +275,12 @@
       <p class="subtitle">Cria pedidos (unitário ou em lote) e acompanha o status de emissão em tempo real.</p>
     </div>
   </div>
-  <div class="gateway-config">
-    <label>Gateway:</label>
-    <input id="gatewayUrl" type="text" value="http://127.0.0.1:8001">
-    <label>API Key:</label>
-    <input id="apiKey" type="password" placeholder="deixe em branco se não configurada">
-    <button class="secondary" id="btnTestarConexao" style="margin:0;">Testar</button>
+  <div class="user-box">
+    <span class="nome" id="userNome"></span>
+    <span class="papel" id="userPapel"></span>
+    <a class="link-admin" id="linkAdmin" href="admin.html" style="display:none">Painel de admin</a>
+    <a class="link-admin" id="linkTrocarSenha" href="#">Trocar senha</a>
+    <button class="sair" id="btnSair">Sair</button>
   </div>
 </div>
 
@@ -251,9 +311,6 @@
       <label for="f-data" class="campo-pf show">Data de nascimento (dd/mm/aaaa)</label>
       <input id="f-data" class="campo-pf show" type="text" placeholder="01/01/1990">
 
-      <label for="f-solicitante">Solicitado por</label>
-      <input id="f-solicitante" type="text" placeholder="seu nome (opcional)">
-
       <button id="btnCriarPedido">Criar pedido</button>
       <div class="msg" id="msgPedido"></div>
     </div>
@@ -267,9 +324,6 @@
 
       <label for="p-arquivo">Arquivo (.xlsx — colunas: nome, tipo, documento, data_nascimento)</label>
       <input id="p-arquivo" type="file" accept=".xlsx">
-
-      <label for="p-solicitante">Solicitado por</label>
-      <input id="p-solicitante" type="text" placeholder="seu nome (opcional)">
 
       <button id="btnEnviarPlanilha">Enviar planilha</button>
       <div class="msg" id="msgPlanilha"></div>
@@ -302,12 +356,14 @@
 </main>
 
 <footer>EmissoesCertidoes — painel provisório para testes internos. Fala direto com o Gateway, sem servidor próprio.</footer>
+</div>
 
 <script>
 const STORAGE_KEY = "certidoes_pedidos_rastreados";
 const STORAGE_KEY_LOTES = "certidoes_lotes_rastreados";
 const STORAGE_GATEWAY_KEY = "certidoes_gateway_url";
-const STORAGE_APIKEY_KEY = "certidoes_api_key";
+const STORAGE_TOKEN_KEY = "certidoes_token";
+const STORAGE_USUARIO_KEY = "certidoes_usuario";
 const STATUS_FINAIS = new Set([
   "sucesso_confirmado", "sucesso_provavel",
   "erro_portal", "erro_tecnico", "falha_indefinida",
@@ -319,17 +375,118 @@ function gatewayUrl() {
   return el("gatewayUrl").value.replace(/\/$/, "");
 }
 
-function apiKey() {
-  return el("apiKey").value.trim();
+function token() {
+  return localStorage.getItem(STORAGE_TOKEN_KEY) || "";
 }
 
-// Header de autenticação — se o Gateway não tiver GATEWAY_API_KEY
-// configurada, ele ignora o header, então é seguro mandar sempre que
-// houver algo preenchido no campo.
-function cabecalhosAuth() {
-  const chave = apiKey();
-  return chave ? { "X-API-Key": chave } : {};
+function usuarioAtual() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_USUARIO_KEY) || "null");
+  } catch {
+    return null;
+  }
 }
+
+function cabecalhosAuth() {
+  const t = token();
+  return t ? { "Authorization": `Bearer ${t}` } : {};
+}
+
+// Wrapper em volta de fetch: manda o token automaticamente, e se o
+// Gateway responder 401 (token expirado/inválido), desloga sozinho em
+// vez de deixar cada chamada falhar silenciosamente sem explicação.
+async function fetchAutenticado(url, opcoes = {}) {
+  const resp = await fetch(url, {
+    ...opcoes,
+    headers: { ...(opcoes.headers || {}), ...cabecalhosAuth() },
+  });
+  if (resp.status === 401) {
+    fazerLogout("Sessão expirada — faça login novamente.");
+  }
+  return resp;
+}
+
+function mostrarLogin(mensagemErro) {
+  el("loginScreen").style.display = "flex";
+  el("appScreen").style.display = "none";
+  if (mensagemErro) mostrarMsg(el("msgLogin"), mensagemErro, "err");
+}
+
+function mostrarApp() {
+  el("loginScreen").style.display = "none";
+  el("appScreen").style.display = "block";
+  const usuario = usuarioAtual();
+  if (usuario) {
+    el("userNome").textContent = usuario.nome;
+    el("userPapel").textContent = usuario.papel === "admin" ? "Admin" : "Colaborador";
+    el("linkAdmin").style.display = usuario.papel === "admin" ? "inline" : "none";
+  }
+  inicializarApp();
+}
+
+function fazerLogout(mensagem) {
+  localStorage.removeItem(STORAGE_TOKEN_KEY);
+  localStorage.removeItem(STORAGE_USUARIO_KEY);
+  mostrarLogin(mensagem);
+}
+
+el("btnSair").addEventListener("click", () => fazerLogout());
+
+el("linkTrocarSenha").addEventListener("click", async (evento) => {
+  evento.preventDefault();
+  const senhaAtual = prompt("Senha atual:");
+  if (!senhaAtual) return;
+  const novaSenha = prompt("Nova senha (mínimo 8 caracteres):");
+  if (!novaSenha) return;
+
+  try {
+    const resp = await fetchAutenticado(`${gatewayUrl()}/auth/me/senha`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ senha_atual: senhaAtual, nova_senha: novaSenha }),
+    });
+    const dados = await resp.json();
+    if (!resp.ok) throw new Error(dados.detail || "Erro desconhecido");
+    alert("Senha trocada com sucesso.");
+  } catch (erro) {
+    alert(`Falha ao trocar senha: ${erro.message}`);
+  }
+});
+
+el("btnLogin").addEventListener("click", async () => {
+  const email = el("login-email").value.trim();
+  const senha = el("login-senha").value;
+  const btn = el("btnLogin");
+  if (!email || !senha) {
+    mostrarMsg(el("msgLogin"), "Preencha e-mail e senha.", "err");
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = "Entrando...";
+  try {
+    const resp = await fetch(`${gatewayUrl()}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, senha }),
+    });
+    const dados = await resp.json();
+    if (!resp.ok) throw new Error(dados.detail || "E-mail ou senha inválidos.");
+    localStorage.setItem(STORAGE_GATEWAY_KEY, gatewayUrl());
+    localStorage.setItem(STORAGE_TOKEN_KEY, dados.access_token);
+    localStorage.setItem(STORAGE_USUARIO_KEY, JSON.stringify(dados.usuario));
+    el("login-senha").value = "";
+    mostrarApp();
+  } catch (erro) {
+    mostrarMsg(el("msgLogin"), erro.message, "err");
+  }
+  btn.disabled = false;
+  btn.textContent = "Entrar";
+});
+
+// Permite logar com Enter em vez de precisar clicar no botão
+el("login-senha").addEventListener("keydown", (evento) => {
+  if (evento.key === "Enter") el("btnLogin").click();
+});
 
 function carregarPedidosRastreados() {
   try {
@@ -382,10 +539,10 @@ function removerLoteRastreado(id) {
 
 async function baixarRelatorioLote(loteId) {
   // Não dá pra usar um <a href download> simples aqui: ele não manda o
-  // header X-API-Key, então quebraria com o Gateway autenticado. Busca via
-  // fetch (com o header certo) e dispara o download a partir do blob.
+  // header Authorization, então quebraria. Busca via fetch (com o header
+  // certo) e dispara o download a partir do blob.
   try {
-    const resp = await fetch(`${gatewayUrl()}/lotes/${loteId}/relatorio`, { headers: cabecalhosAuth() });
+    const resp = await fetchAutenticado(`${gatewayUrl()}/lotes/${loteId}/relatorio`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const blob = await resp.blob();
     const url = URL.createObjectURL(blob);
@@ -454,6 +611,7 @@ const STATUS_PORTAL = {
   curitiba_consulta_debitos_divida_ativa: { nivel: "ok", texto: "✅ Validado de ponta a ponta (com captcha real) — consulta informativa, não é certidão formal" },
   cnpj_qsa: { nivel: "parcial", texto: "🟡 Submissão funciona, backend rejeita o captcha (investigação em andamento)" },
   trf4_certidao_civel_criminal: { nivel: "parcial", texto: "🟡 Submissão validada — download final bloqueado por bug do site do TRF4" },
+  sefaz_pr_certidao_debitos: { nivel: "parcial", texto: "🟡 2captcha não consegue resolver o captcha desse portal ainda" },
 };
 
 function atualizarOpcoesTipo() {
@@ -489,7 +647,7 @@ let portaisCache = {};
 
 async function carregarPortais() {
   try {
-    const resp = await fetch(`${gatewayUrl()}/portais`, { headers: cabecalhosAuth() });
+    const resp = await fetchAutenticado(`${gatewayUrl()}/portais`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const portais = await resp.json();
     portaisCache = portais;
@@ -512,30 +670,12 @@ async function carregarPortais() {
 el("f-portal").addEventListener("change", atualizarOpcoesTipo);
 el("f-tipo").addEventListener("change", atualizarVisibilidadeData);
 
-el("btnTestarConexao").addEventListener("click", async () => {
-  const btn = el("btnTestarConexao");
-  btn.disabled = true;
-  btn.textContent = "Testando...";
-  try {
-    const resp = await fetch(`${gatewayUrl()}/portais`, { headers: cabecalhosAuth() });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    localStorage.setItem(STORAGE_GATEWAY_KEY, gatewayUrl());
-    localStorage.setItem(STORAGE_APIKEY_KEY, apiKey());
-    await carregarPortais();
-    btn.textContent = "OK ✓";
-  } catch {
-    btn.textContent = "Falhou ✕ (confira a API Key)";
-  }
-  setTimeout(() => { btn.textContent = "Testar"; btn.disabled = false; }, 2000);
-});
-
 el("btnCriarPedido").addEventListener("click", async () => {
   const portal = el("f-portal").value;
   const nome = el("f-nome").value.trim();
   const tipo = el("f-tipo").value;
   const documento = el("f-documento").value.trim();
   const dataNascimento = el("f-data").value.trim();
-  const solicitadoPor = el("f-solicitante").value.trim();
   const msgEl = el("msgPedido");
 
   if (!portal || !nome || !documento) {
@@ -549,10 +689,9 @@ el("btnCriarPedido").addEventListener("click", async () => {
   form.append("tipo", tipo);
   form.append("documento", documento);
   form.append("data_nascimento", dataNascimento);
-  if (solicitadoPor) form.append("solicitado_por", solicitadoPor);
 
   try {
-    const resp = await fetch(`${gatewayUrl()}/pedidos`, { method: "POST", body: form, headers: cabecalhosAuth() });
+    const resp = await fetchAutenticado(`${gatewayUrl()}/pedidos`, { method: "POST", body: form });
     const dados = await resp.json();
     if (!resp.ok) throw new Error(dados.detail || "Erro desconhecido");
     adicionarPedidoRastreado(dados.pedido_id);
@@ -567,7 +706,6 @@ el("btnCriarPedido").addEventListener("click", async () => {
 el("btnEnviarPlanilha").addEventListener("click", async () => {
   const portal = el("p-portal").value;
   const arquivo = el("p-arquivo").files[0];
-  const solicitadoPor = el("p-solicitante").value.trim();
   const msgEl = el("msgPlanilha");
 
   if (!portal || !arquivo) {
@@ -578,10 +716,9 @@ el("btnEnviarPlanilha").addEventListener("click", async () => {
   const form = new FormData();
   form.append("portal", portal);
   form.append("planilha", arquivo);
-  if (solicitadoPor) form.append("solicitado_por", solicitadoPor);
 
   try {
-    const resp = await fetch(`${gatewayUrl()}/pedidos/planilha`, { method: "POST", body: form, headers: cabecalhosAuth() });
+    const resp = await fetchAutenticado(`${gatewayUrl()}/pedidos/planilha`, { method: "POST", body: form });
     const dados = await resp.json();
     if (!resp.ok) throw new Error(dados.detail || "Erro desconhecido");
     mostrarMsg(
@@ -591,7 +728,7 @@ el("btnEnviarPlanilha").addEventListener("click", async () => {
     );
     adicionarLoteRastreado(dados.lote_id, arquivo.name);
     // busca os pedidos do lote pra já rastrear todos
-    const loteResp = await fetch(`${gatewayUrl()}/lotes/${dados.lote_id}`, { headers: cabecalhosAuth() });
+    const loteResp = await fetchAutenticado(`${gatewayUrl()}/lotes/${dados.lote_id}`);
     const lote = await loteResp.json();
     (lote.pedidos || []).forEach((p) => adicionarPedidoRastreado(p.id));
     el("p-arquivo").value = "";
@@ -632,7 +769,7 @@ async function verificarDLQ() {
   // DLQ não muda tão rápido quanto o status de um pedido — não precisa
   // conferir a cada 5s junto com a tabela, só de vez em quando.
   try {
-    const resp = await fetch(`${gatewayUrl()}/dlq/status`, { headers: cabecalhosAuth() });
+    const resp = await fetchAutenticado(`${gatewayUrl()}/dlq/status`);
     if (!resp.ok) return;
     const dados = await resp.json();
     const comProblema = Object.entries(dados).filter(([, contagem]) => contagem > 0);
@@ -681,7 +818,7 @@ async function atualizarTabela() {
   const resultados = await Promise.all(
     ids.map(async (id) => {
       try {
-        const resp = await fetch(`${gatewayUrl()}/pedidos/${id}`, { headers: cabecalhosAuth() });
+        const resp = await fetchAutenticado(`${gatewayUrl()}/pedidos/${id}`);
         if (!resp.ok) return [id, { id, status: "desconhecido", mensagem: "não encontrado" }];
         return [id, await resp.json()];
       } catch {
@@ -728,13 +865,7 @@ function renderizarTabela(dados) {
     .join("");
 }
 
-// inicialização
-(function init() {
-  const gatewaySalvo = localStorage.getItem(STORAGE_GATEWAY_KEY);
-  if (gatewaySalvo) el("gatewayUrl").value = gatewaySalvo;
-  const apiKeySalva = localStorage.getItem(STORAGE_APIKEY_KEY);
-  if (apiKeySalva) el("apiKey").value = apiKeySalva;
-
+function inicializarApp() {
   carregarPortais();
   atualizarTabela();
   renderizarLotes();
@@ -742,10 +873,6 @@ function renderizarTabela(dados) {
 
   setInterval(() => {
     const ids = carregarPedidosRastreados();
-    const algumPendente = ids.some((id) => {
-      const status = (dadosPedidosCache[id] || {}).status;
-      return !STATUS_FINAIS.has(status);
-    });
     if (ids.length === 0) return;
     atualizarTabela();
   }, 5000);
@@ -753,6 +880,30 @@ function renderizarTabela(dados) {
   // DLQ muda bem mais devagar que o status de um pedido — confere a
   // cada 20s em vez de junto com a tabela.
   setInterval(verificarDLQ, 20000);
+}
+
+// inicialização
+(async function init() {
+  const gatewaySalvo = localStorage.getItem(STORAGE_GATEWAY_KEY);
+  if (gatewaySalvo) el("gatewayUrl").value = gatewaySalvo;
+
+  if (!token()) {
+    mostrarLogin();
+    return;
+  }
+
+  // Já tem token salvo — confirma que ainda é válido antes de mostrar o
+  // painel (evita mostrar a tela certa por um instante e depois quebrar
+  // em todo fetch se o token já tiver expirado).
+  try {
+    const resp = await fetchAutenticado(`${gatewayUrl()}/auth/me`);
+    if (!resp.ok) throw new Error();
+    const usuario = await resp.json();
+    localStorage.setItem(STORAGE_USUARIO_KEY, JSON.stringify(usuario));
+    mostrarApp();
+  } catch {
+    fazerLogout();
+  }
 })();
 </script>
 </body>

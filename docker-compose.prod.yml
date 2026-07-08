@@ -1,0 +1,35 @@
+# Override pra produção — usar junto com o docker-compose.yml principal:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Adiciona o Nginx (serve o front estático + faz proxy reverso pro
+# Gateway) e o Certbot (emite/renova o certificado HTTPS). Ver
+# docs/DEPLOY_VPS.md pro passo a passo completo.
+services:
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./front:/usr/share/nginx/html:ro
+      - certbot_conf:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
+    depends_on:
+      - gateway
+
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - certbot_conf:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    # Não roda automaticamente — é chamado sob demanda (ver
+    # docs/DEPLOY_VPS.md) pra emitir o certificado na primeira vez, e
+    # depois via cron pra renovar. Sem entrypoint aqui, o container fica
+    # parado até alguém rodar `docker compose run certbot ...`.
+    entrypoint: ["true"]
+
+volumes:
+  certbot_conf:
+  certbot_www:

@@ -52,6 +52,14 @@ restantes. Da mais fácil (já pronta) pra mais difícil:
    **bug do próprio site do TRF4** (link do botão "Visualizar Certidão
    Gerada" está quebrado, 404 confirmado de 3 formas diferentes) — não
    depende mais de nós, só do TRF4 corrigir
+8. SEFAZ PR (Certidão de Débitos Tributários e Dívida Ativa) — landing
+   page passou a carregar sem bloqueio de borda (mudança desde a
+   varredura original), formulário construído (`worker-sefaz-pr`), mas
+   bloqueado ainda mais cedo que o CNPJ+QSA: o **2captcha** devolveu
+   `ERROR_CAPTCHA_UNSOLVABLE` nas 3 tentativas — reCAPTCHA Enterprise
+   invisível parece ser difícil demais pro serviço de resolução atual.
+   Não depende de código nosso; precisaria trocar de provedor de captcha
+   pra ter alguma chance
 
 **Tier 2 — vago.** Nenhum portal 🟢 "pronto pra construir agora" sobrou na
 varredura atual.
@@ -67,13 +75,15 @@ reconhecimento antes de classificar**
 9. TRT9 — WAF CloudFront ("403 Request blocked")
 10. MPF — WAF genérico ("Web Page Blocked", Attack ID)
 11. MPT — mesmo padrão de WAF do MPF (Attack ID idêntico)
-12. FGTS (Caixa) — ShieldSquare/Radware Bot Manager
-13. SEFAZ PR — reCAPTCHA Enterprise com pontuação de risco comportamental
-14. Prefeitura de Curitiba (CND + Imóvel/IPTU, mesmo domínio) — Akamai
+12. FGTS (Caixa) — ShieldSquare/Radware Bot Manager (confirmado de novo
+    numa revalidação — título da página de bloqueio é literalmente
+    "ShieldSquare Captcha")
+13. Prefeitura de Curitiba (CND + Imóvel/IPTU, mesmo domínio) — Akamai
     Bot Manager, domínio inteiro bloqueado
 
-⚠️ **Nota importante**: 4 desses 6 (TRT9, MPF, MPT, FGTS) bloquearam
-vindos do mesmo ambiente/IP de teste (datacenter/cloud). Isso pode ser
+⚠️ **Nota importante**: esses 5 bloquearam vindos do mesmo ambiente/IP de
+teste (datacenter/cloud) — revalidados novamente e continuam bloqueados
+(confirmado com navegador real, não só `curl`). Isso pode ser
 específico dessa rede de desenvolvimento — vale re-testar a partir da
 rede real de produção do escritório antes de descartar de vez, já que
 bloqueio por reputação de IP de datacenter nem sempre se repete numa
@@ -102,7 +112,7 @@ reabra a discussão:
 | 2 | Receita Federal — CPF (situação cadastral) | PF | `servicos.receita.fazenda.gov.br/servicos/cpf/consultasituacao/consultapublica.asp` | ✅ Automatizado e **validado de ponta a ponta** com captcha real (hCaptcha, não reCAPTCHA como o catálogo original supunha) — comprovante emitido e PDF gerado corretamente |
 | 3 | Receita Federal — CNPJ+QSA (cnpjreva) | PJ | `solucoes.receita.fazenda.gov.br/servicos/cnpjreva/cnpjreva_solicitacao.asp` | 🟡 Construído, mas **bloqueado** — o backend rejeita o token do hCaptcha mesmo com a submissão funcionando corretamente (hipótese de reCAPTCHA descartada). Provável causa: validação de IP entre quem resolve o captcha e quem submete, exigindo proxy. Ver aviso no topo de `services/worker-cnpj-qsa/worker.py` |
 | 4 | Pesquisa Protesto (CENPROT) | PF/PJ | `pesquisaprotesto.com.br` | ❌ **Eliminado da fila** (decisão do escritório) — login/certificado digital, entrega assíncrona (até 60 dias) |
-| 5 | SEFAZ PR | PF/PJ | Link da planilha morto (404) — atual: `cdwfazenda.paas.pr.gov.br/cdwportal/certidao/automatica` | 🔴 Complexo — reCAPTCHA Enterprise invisível com pontuação de risco comportamental; rejeitou a sessão automatizada antes mesmo de qualquer captcha ser resolvido. Despriorizado |
+| 5 | SEFAZ PR | PF/PJ | Link da planilha morto (404) — atual: `cdwfazenda.paas.pr.gov.br/cdwportal/certidao/automatica` | 🟡 **Reconhecimento atualizado**: a landing page passou a carregar sem bloqueio de borda (antes rejeitava a sessão automatizada de cara). Worker construído (`worker-sefaz-pr`, reCAPTCHA Enterprise com hook de callback), mas testado com captcha real e bloqueado num ponto anterior ao do CNPJ+QSA: o próprio **2captcha** devolveu `ERROR_CAPTCHA_UNSOLVABLE` (não conseguiu nem gerar um token pra tentar). Não depende de código nosso — precisaria de outro provedor de captcha |
 | 6 | Prefeitura de Curitiba (CND) | PF/PJ | `cnd-cidadao.curitiba.pr.gov.br/Certidao/Solicitar[Cpf]` | 🔴 Complexo — domínio inteiro (inclusive `www.curitiba.pr.gov.br`) bloqueado por Akamai Bot Manager (Access Denied), provável bloqueio de IP de datacenter, não específico da página. Despriorizado |
 | 7 | Distribuidor Justiça Estadual 1º | PF/PJ | `1distribuidorcuritiba.com.br/default/` | ❌ **Eliminado da fila** (decisão do escritório) — serviço pago e assíncrono (mesmo operador do item 8) |
 | 8 | Distribuidor Justiça Estadual 2º | PF/PJ | `2distribuidorcuritiba.com.br/default/` | ❌ **Eliminado da fila** (decisão do escritório) — serviço pago e assíncrono (o próprio site avisa que a elaboração só ocorre no dia seguinte à confirmação do pagamento bancário), fluxo multi-etapa |

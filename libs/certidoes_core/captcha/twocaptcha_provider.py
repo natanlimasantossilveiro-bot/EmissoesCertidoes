@@ -25,6 +25,17 @@ class ResolvedorTwoCaptcha(ResolvedorCaptcha):
         )
         return resultado["code"]
 
+    async def resolver_recaptcha_enterprise(self, sitekey: str, url_pagina: str, invisible: bool = True) -> str:
+        resultado = await asyncio.to_thread(
+            self._cliente.recaptcha,
+            sitekey=sitekey,
+            url=url_pagina,
+            version="v2",
+            enterprise=1,
+            invisible=1 if invisible else 0,
+        )
+        return resultado["code"]
+
     async def resolver_captcha_imagem(self, imagem_base64: str) -> str:
         resultado = await asyncio.to_thread(self._cliente.normal, imagem_base64)
         return resultado["code"]

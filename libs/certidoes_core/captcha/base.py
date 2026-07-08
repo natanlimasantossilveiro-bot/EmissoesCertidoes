@@ -21,6 +21,14 @@ class ResolvedorCaptcha(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def resolver_recaptcha_enterprise(self, sitekey: str, url_pagina: str, invisible: bool = True) -> str:
+        """reCAPTCHA Enterprise (diferente do v2 comum — usa pontuação de
+        risco comportamental do Google, pode rejeitar mesmo com token
+        válido). `invisible=True` pra widgets size:"invisible" (sem
+        checkbox visível, executado via JS sob demanda)."""
+        raise NotImplementedError
+
+    @abstractmethod
     async def resolver_captcha_imagem(self, imagem_base64: str) -> str:
         """Pra captchas simples de texto/imagem (ex: alguns Atende.Net)."""
         raise NotImplementedError

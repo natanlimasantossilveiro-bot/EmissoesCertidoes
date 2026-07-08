@@ -51,7 +51,7 @@ def gerar_relatorio_lote(pedidos: list[PedidoCertidao]) -> bytes:
             pedido.mensagem or "",
             nome_arquivo(pedido.caminho_certidao),
             nome_arquivo(pedido.url_evidencia),
-            pedido.solicitado_por or "",
+            pedido.usuario.nome if pedido.usuario else "",
             pedido.criado_em.strftime("%d/%m/%Y %H:%M") if pedido.criado_em else "",
             pedido.atualizado_em.strftime("%d/%m/%Y %H:%M") if pedido.atualizado_em else "",
         ])

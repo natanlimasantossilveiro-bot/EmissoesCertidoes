@@ -48,7 +48,7 @@ débito" às vezes quebra visualmente bem no meio, virando um `\n` onde o
 código esperava um espaço, o que fazia o `in` simples falhar mesmo com o
 texto certo na tela (o worker caía em `resultado_indefinido` mesmo tendo a
 mensagem correta na tela). Corrigido normalizando espaços em branco
-(`re.sub(r"\s+", " ", ...)`) antes de comparar — mesma correção aplicada
+(`re.sub(r"\\s+", " ", ...)`) antes de comparar — mesma correção aplicada
 no worker de Certidão de Cadastro de Imóvel, que usa o mesmo padrão.
 """
 import asyncio

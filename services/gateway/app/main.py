@@ -4,34 +4,24 @@ gravar no banco com status PENDENTE, e publicar na fila do portal certo.
 Nunca abre navegador nem espera o resultado — por isso responde rápido
 mesmo com fila cheia.
 """
-import os
-import secrets
-
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Response, Depends, Header
+from pydantic import BaseModel, EmailStr
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
-from certidoes_core.banco import get_session, criar_tabelas, PedidoCertidao, LotePlanilha, StatusPedido
+from certidoes_core.banco import (
+    get_session, criar_tabelas, PedidoCertidao, LotePlanilha, StatusPedido, Usuario, PapelUsuario,
+)
 from certidoes_core.fila import publicar_pedido
 
 from app.planilha import ler_planilha_certidoes  # parser adaptado, ver services/gateway/app/planilha.py
 from app.relatorio import gerar_relatorio_lote  # ver services/gateway/app/relatorio.py
 from app.dlq import status_dlq_todos_portais  # ver services/gateway/app/dlq.py
+from app.auth import (
+    autenticar, criar_token, obter_usuario_atual, exigir_admin,
+    gerar_hash_senha, verificar_senha, bootstrap_admin_inicial,
+)
 
-# Autenticação simples por chave fixa (header X-API-Key) — o suficiente pra
-# tirar o Gateway de "totalmente aberto" sem exigir infraestrutura de login
-# de verdade. Se GATEWAY_API_KEY não estiver configurada (dev local), a
-# checagem é pulada — nunca trava quem está só testando sem .env.
-GATEWAY_API_KEY = os.getenv("GATEWAY_API_KEY", "")
-
-
-def verificar_api_key(x_api_key: str = Header(default="")):
-    if not GATEWAY_API_KEY:
-        return
-    if not secrets.compare_digest(x_api_key, GATEWAY_API_KEY):
-        raise HTTPException(401, "API key inválida ou ausente (header X-API-Key).")
-
-
-app = FastAPI(title="Certidões Gateway", dependencies=[Depends(verificar_api_key)])
+app = FastAPI(title="Certidões Gateway")
 
 app.add_middleware(
     CORSMiddleware,
@@ -51,6 +41,7 @@ PORTAIS_DISPONIVEIS = {
     "trf4_certidao_civel_criminal": "Certidão Judicial Cível/Criminal/Eleitoral - JFPR/TRF4",
     "curitiba_certidao_cadastro_imovel": "Certidão de Cadastro de Imóvel - Prefeitura de Curitiba",
     "curitiba_consulta_debitos_divida_ativa": "Consulta de Débitos - Dívida Ativa - Prefeitura de Curitiba",
+    "sefaz_pr_certidao_debitos": "Certidão de Débitos Tributários e Dívida Ativa - SEFAZ PR",
     # atendenet_pinhais entra aqui quando o worker existir de fato — listar
     # sem worker deixa o pedido "pendente" pra sempre, sem ninguém consumindo
     # a fila, o que parece bug numa demonstração
@@ -61,21 +52,166 @@ PORTAIS_DISPONIVEIS = {
 @app.on_event("startup")
 def startup():
     criar_tabelas()
+    bootstrap_admin_inicial()
 
+
+# ---------- autenticação ----------
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    senha: str
+
+
+def _usuario_para_json(usuario: Usuario) -> dict:
+    return {
+        "id": usuario.id,
+        "nome": usuario.nome,
+        "email": usuario.email,
+        "papel": usuario.papel,
+        "ativo": usuario.ativo,
+        "ultimo_acesso_em": usuario.ultimo_acesso_em,
+    }
+
+
+@app.post("/auth/login")
+def login(dados: LoginRequest):
+    usuario = autenticar(dados.email, dados.senha)
+    return {"access_token": criar_token(usuario), "usuario": _usuario_para_json(usuario)}
+
+
+@app.get("/auth/me")
+def quem_sou_eu(usuario: Usuario = Depends(obter_usuario_atual)):
+    return _usuario_para_json(usuario)
+
+
+class TrocarSenhaRequest(BaseModel):
+    senha_atual: str
+    nova_senha: str
+
+
+@app.patch("/auth/me/senha")
+def trocar_minha_senha(dados: TrocarSenhaRequest, usuario: Usuario = Depends(obter_usuario_atual)):
+    """Todo usuário troca a própria senha sem depender de um admin —
+    importante principalmente pro admin inicial, cuja senha de bootstrap
+    veio de uma variável de ambiente e deve ser trocada assim que possível."""
+    with get_session() as session:
+        usuario_db = session.get(Usuario, usuario.id)
+        if not verificar_senha(dados.senha_atual, usuario_db.senha_hash):
+            raise HTTPException(401, "Senha atual incorreta.")
+        usuario_db.senha_hash = gerar_hash_senha(dados.nova_senha)
+        session.commit()
+    return {"ok": True}
+
+
+# ---------- administração de usuários ----------
+
+class CriarUsuarioRequest(BaseModel):
+    nome: str
+    email: EmailStr
+    senha: str
+    papel: PapelUsuario = PapelUsuario.COLABORADOR
+
+
+class AtualizarUsuarioRequest(BaseModel):
+    ativo: bool | None = None
+    papel: PapelUsuario | None = None
+    nova_senha: str | None = None
+
+
+@app.post("/admin/usuarios")
+def criar_usuario(dados: CriarUsuarioRequest, _admin: Usuario = Depends(exigir_admin)):
+    with get_session() as session:
+        if session.query(Usuario).filter_by(email=dados.email).first():
+            raise HTTPException(400, "Já existe um usuário com esse e-mail.")
+
+        usuario = Usuario(
+            nome=dados.nome,
+            email=dados.email,
+            senha_hash=gerar_hash_senha(dados.senha),
+            papel=dados.papel,
+        )
+        session.add(usuario)
+        session.commit()
+        session.refresh(usuario)
+        return _usuario_para_json(usuario)
+
+
+@app.get("/admin/usuarios")
+def listar_usuarios(_admin: Usuario = Depends(exigir_admin)):
+    with get_session() as session:
+        usuarios = session.query(Usuario).order_by(Usuario.criado_em).all()
+        return [_usuario_para_json(u) for u in usuarios]
+
+
+@app.patch("/admin/usuarios/{usuario_id}")
+def atualizar_usuario(usuario_id: str, dados: AtualizarUsuarioRequest, _admin: Usuario = Depends(exigir_admin)):
+    with get_session() as session:
+        usuario = session.get(Usuario, usuario_id)
+        if not usuario:
+            raise HTTPException(404, "Usuário não encontrado.")
+
+        if dados.ativo is not None:
+            usuario.ativo = dados.ativo
+        if dados.papel is not None:
+            usuario.papel = dados.papel
+        if dados.nova_senha:
+            usuario.senha_hash = gerar_hash_senha(dados.nova_senha)
+
+        session.commit()
+        session.refresh(usuario)
+        return _usuario_para_json(usuario)
+
+
+@app.get("/admin/atividade")
+def consultar_atividade(_admin: Usuario = Depends(exigir_admin)):
+    """Pedidos agrupados por usuário — junto com `GET /admin/usuarios`
+    (que já mostra `ultimo_acesso_em`), dá a visão completa de quem
+    acessou e o que cada colaborador pediu."""
+    with get_session() as session:
+        usuarios = session.query(Usuario).order_by(Usuario.criado_em).all()
+        resultado = []
+        for usuario in usuarios:
+            pedidos = (
+                session.query(PedidoCertidao)
+                .filter_by(usuario_id=usuario.id)
+                .order_by(PedidoCertidao.criado_em.desc())
+                .limit(50)
+                .all()
+            )
+            resultado.append({
+                "usuario": _usuario_para_json(usuario),
+                "total_pedidos": len(pedidos),
+                "pedidos_recentes": [
+                    {
+                        "id": p.id,
+                        "portal": p.portal,
+                        "nome": p.nome,
+                        "status": p.status,
+                        "criado_em": p.criado_em,
+                    }
+                    for p in pedidos
+                ],
+            })
+        return resultado
+
+
+# ---------- portais e DLQ ----------
 
 @app.get("/portais")
-def listar_portais():
+def listar_portais(_usuario: Usuario = Depends(obter_usuario_atual)):
     return PORTAIS_DISPONIVEIS
 
 
 @app.get("/dlq/status")
-def consultar_status_dlq():
+def consultar_status_dlq(_usuario: Usuario = Depends(obter_usuario_atual)):
     """Quantas mensagens estão presas na fila `<portal>.dlq` de cada
     portal — pedidos que falharam `MAX_TENTATIVAS` vezes seguidas e
     precisam de inspeção manual. Consulta a API de management do
     RabbitMQ (ver `app/dlq.py`)."""
     return status_dlq_todos_portais(list(PORTAIS_DISPONIVEIS.keys()))
 
+
+# ---------- pedidos ----------
 
 @app.post("/pedidos")
 def criar_pedido_unitario(
@@ -84,7 +220,7 @@ def criar_pedido_unitario(
     tipo: str = Form(None),
     documento: str = Form(...),
     data_nascimento: str = Form(""),
-    solicitado_por: str = Form(None),
+    usuario: Usuario = Depends(obter_usuario_atual),
 ):
     if portal not in PORTAIS_DISPONIVEIS:
         raise HTTPException(400, f"Portal '{portal}' não habilitado.")
@@ -96,7 +232,7 @@ def criar_pedido_unitario(
             tipo=tipo,
             documento=documento,
             data_nascimento=data_nascimento,
-            solicitado_por=solicitado_por,
+            usuario_id=usuario.id,
             status=StatusPedido.PENDENTE,
         )
         session.add(pedido)
@@ -112,7 +248,7 @@ def criar_pedido_unitario(
 async def criar_pedidos_planilha(
     portal: str = Form(...),
     planilha: UploadFile = File(...),
-    solicitado_por: str = Form(None),
+    usuario: Usuario = Depends(obter_usuario_atual),
 ):
     if portal not in PORTAIS_DISPONIVEIS:
         raise HTTPException(400, f"Portal '{portal}' não habilitado.")
@@ -124,7 +260,7 @@ async def criar_pedidos_planilha(
         lote = LotePlanilha(
             nome_arquivo_original=planilha.filename,
             total_linhas=str(len(registros)),
-            solicitado_por=solicitado_por,
+            usuario_id=usuario.id,
         )
         session.add(lote)
         session.commit()
@@ -145,7 +281,7 @@ async def criar_pedidos_planilha(
                 data_nascimento=registro.get("data_nascimento", ""),
                 lote_id=lote_id_valor,
                 linha_planilha=str(registro["linha"]),
-                solicitado_por=solicitado_por,
+                usuario_id=usuario.id,
                 status=StatusPedido.PENDENTE,
             )
             session.add(pedido)
@@ -166,7 +302,7 @@ async def criar_pedidos_planilha(
 
 
 @app.get("/pedidos/{pedido_id}")
-def consultar_pedido(pedido_id: str):
+def consultar_pedido(pedido_id: str, _usuario: Usuario = Depends(obter_usuario_atual)):
     with get_session() as session:
         pedido = session.get(PedidoCertidao, pedido_id)
         if not pedido:
@@ -184,7 +320,7 @@ def consultar_pedido(pedido_id: str):
 
 
 @app.get("/lotes/{lote_id}")
-def consultar_lote(lote_id: str):
+def consultar_lote(lote_id: str, _usuario: Usuario = Depends(obter_usuario_atual)):
     with get_session() as session:
         pedidos = session.query(PedidoCertidao).filter_by(lote_id=lote_id).all()
         if not pedidos:
@@ -220,7 +356,7 @@ def consultar_lote(lote_id: str):
 
 
 @app.get("/lotes/{lote_id}/relatorio")
-def baixar_relatorio_lote(lote_id: str):
+def baixar_relatorio_lote(lote_id: str, _usuario: Usuario = Depends(obter_usuario_atual)):
     """Relatório consolidado do lote em .xlsx — pra quem subiu uma planilha
     com várias linhas e quer um resumo pra baixar, em vez de conferir
     pedido por pedido na tabela do front. Pode ser gerado a qualquer

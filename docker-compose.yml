@@ -3,9 +3,15 @@ version: "3.8"
 services:
   rabbitmq:
     image: rabbitmq:3.13-management
+    restart: unless-stopped
     ports:
       - "127.0.0.1:5672:5672"   # protocolo AMQP
       - "127.0.0.1:15672:15672" # painel web (usuário/senha padrão: guest/guest)
+    volumes:
+      # Sem isso, filas e mensagens na DLQ somem toda vez que o container
+      # reinicia — inaceitável em produção (é justamente a DLQ que guarda
+      # os pedidos que falharam e precisam de inspeção manual).
+      - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
       test: ["CMD", "rabbitmqctl", "status"]
       interval: 10s
@@ -14,6 +20,7 @@ services:
 
   mysql:
     image: mysql:8.0
+    restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: certidoes
@@ -31,12 +38,15 @@ services:
     build:
       context: .
       dockerfile: services/gateway/Dockerfile
+    restart: unless-stopped
     ports:
       - "127.0.0.1:8001:8000"
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
-      GATEWAY_API_KEY: ${GATEWAY_API_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_SENHA_INICIAL: ${ADMIN_SENHA_INICIAL}
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -47,6 +57,7 @@ services:
     build:
       context: .
       dockerfile: services/worker-receita-federal/Dockerfile
+    restart: unless-stopped
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -69,6 +80,7 @@ services:
     build:
       context: .
       dockerfile: services/worker-cpf/Dockerfile
+    restart: unless-stopped
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -90,6 +102,7 @@ services:
     build:
       context: .
       dockerfile: services/worker-cnpj-qsa/Dockerfile
+    restart: unless-stopped
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -111,6 +124,7 @@ services:
     build:
       context: .
       dockerfile: services/worker-tst-cndt/Dockerfile
+    restart: unless-stopped
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -132,6 +146,7 @@ services:
     build:
       context: .
       dockerfile: services/worker-trf4-certidao/Dockerfile
+    restart: unless-stopped
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -153,6 +168,7 @@ services:
     build:
       context: .
       dockerfile: services/worker-curitiba-cadastro-imovel/Dockerfile
+    restart: unless-stopped
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -174,6 +190,7 @@ services:
     build:
       context: .
       dockerfile: services/worker-curitiba-debitos-divida-ativa/Dockerfile
+    restart: unless-stopped
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -191,6 +208,28 @@ services:
     deploy:
       replicas: 1
 
+  worker-sefaz-pr:
+    build:
+      context: .
+      dockerfile: services/worker-sefaz-pr/Dockerfile
+    restart: unless-stopped
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
+      BROWSER_HEADLESS: "true"
+      BROWSER_DOWNLOAD_DIR: /data/downloads
+      STORAGE_LOCAL_PATH: /data/evidencias
+      TWOCAPTCHA_API_KEY: ${TWOCAPTCHA_API_KEY}
+    volumes:
+      - worker_sefaz_pr_data:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+
   # Quando o worker do atendenet_pinhais estiver pronto (baseado no
   # SsaMonitorProcessos), ele entra aqui do mesmo jeito:
   #
@@ -198,6 +237,7 @@ services:
   #   build:
   #     context: .
   #     dockerfile: services/worker-atendenet-pinhais/Dockerfile
+  #   restart: unless-stopped
   #   environment:
   #     RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
   #     DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -208,6 +248,7 @@ services:
 
 volumes:
   mysql_data:
+  rabbitmq_data:
   worker_rf_data:
   worker_cpf_data:
   worker_cnpj_qsa_data:
@@ -215,3 +256,4 @@ volumes:
   worker_trf4_data:
   worker_curitiba_imovel_data:
   worker_curitiba_debitos_data:
+  worker_sefaz_pr_data:

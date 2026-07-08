@@ -54,12 +54,45 @@ HOOK_SCRIPT_HCAPTCHA_CALLBACK = """
 })();
 """
 
+# Mesma ideia do hook de hCaptcha acima, mas pro reCAPTCHA Enterprise em
+# modo render=explicit (confirmado no SEFAZ PR): o app registra um
+# callback na hora de chamar grecaptcha.enterprise.render({sitekey,
+# callback}), e só esse callback aciona o fluxo real de submissão — a
+# resposta do 2captcha sozinha não basta. Intercepta a atribuição de
+# window.grecaptcha (não window.grecaptcha.enterprise diretamente, porque
+# o objeto inteiro é atribuído de uma vez só quando o script do Google
+# carrega) pra capturar esse callback em window.__recaptchaEnterpriseCallback.
+HOOK_SCRIPT_RECAPTCHA_ENTERPRISE_CALLBACK = """
+(function() {
+    let _real;
+    try {
+        Object.defineProperty(window, "grecaptcha", {
+            configurable: true,
+            get() { return _real; },
+            set(value) {
+                _real = value;
+                try {
+                    if (value.enterprise && value.enterprise.render) {
+                        const originalRender = value.enterprise.render.bind(value.enterprise);
+                        value.enterprise.render = function(container, params) {
+                            window.__recaptchaEnterpriseCallback = params.callback;
+                            return originalRender(container, params);
+                        };
+                    }
+                } catch (e) {}
+            }
+        });
+    } catch (e) {}
+})();
+"""
+
 
 class AutomacaoNodriverBase(AutomacaoPortal):
     url_inicial: str
     browser_args_extra: list = []
     espera_inicial_segundos: int = 3  # portais mais pesados (ex: SPA Angular) podem sobrescrever
     usar_hook_hcaptcha_callback: bool = False  # ver HOOK_SCRIPT_HCAPTCHA_CALLBACK acima
+    usar_hook_recaptcha_enterprise_callback: bool = False  # ver HOOK_SCRIPT_RECAPTCHA_ENTERPRISE_CALLBACK acima
 
     @abstractmethod
     async def preencher_e_emitir(self, page, pedido: PedidoCertidao) -> ResultadoEmissao:
@@ -80,14 +113,19 @@ class AutomacaoNodriverBase(AutomacaoPortal):
         )
         try:
             page = await browser.get("about:blank")
-            if self.usar_hook_hcaptcha_callback:
+            if self.usar_hook_hcaptcha_callback or self.usar_hook_recaptcha_enterprise_callback:
                 # Page.enable é obrigatório aqui — sem isso,
                 # addScriptToEvaluateOnNewDocument "sucede" (retorna um id)
                 # mas não tem efeito nenhum na prática (confirmado testando).
                 await page.send(nd.cdp.page.enable())
-                await page.send(nd.cdp.page.add_script_to_evaluate_on_new_document(
-                    source=HOOK_SCRIPT_HCAPTCHA_CALLBACK
-                ))
+                if self.usar_hook_hcaptcha_callback:
+                    await page.send(nd.cdp.page.add_script_to_evaluate_on_new_document(
+                        source=HOOK_SCRIPT_HCAPTCHA_CALLBACK
+                    ))
+                if self.usar_hook_recaptcha_enterprise_callback:
+                    await page.send(nd.cdp.page.add_script_to_evaluate_on_new_document(
+                        source=HOOK_SCRIPT_RECAPTCHA_ENTERPRISE_CALLBACK
+                    ))
 
             await page.get(self.url_inicial)
             await page.wait(self.espera_inicial_segundos)
