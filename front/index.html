@@ -1,0 +1,759 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Certidões — Painel de Emissão</title>
+<style>
+  :root {
+    --bg: #eef1f6;
+    --card: #ffffff;
+    --border: #e2e5ec;
+    --text: #1c2130;
+    --text-muted: #6b7280;
+    --primary: #2f5fd7;
+    --primary-dark: #23479f;
+    --primary-bg: #eaf0ff;
+    --ok: #17874a;
+    --ok-bg: #e4f7ec;
+    --warn: #9a6400;
+    --warn-bg: #fdf3df;
+    --err: #b23324;
+    --err-bg: #fbe9e7;
+    --neutral: #6b7280;
+    --neutral-bg: #eef0f3;
+    --radius: 12px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .app-header {
+    background: linear-gradient(120deg, var(--primary-dark), var(--primary));
+    color: #fff;
+    padding: 22px 28px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 14px;
+  }
+  .app-header .brand { display: flex; align-items: center; gap: 12px; }
+  .app-header .brand-icon {
+    width: 40px; height: 40px; border-radius: 10px;
+    background: rgba(255,255,255,.15);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.3rem;
+  }
+  .app-header h1 { font-size: 1.25rem; margin: 0; line-height: 1.3; }
+  .app-header .subtitle { font-size: .82rem; color: rgba(255,255,255,.85); margin: 2px 0 0; }
+  .env-tag {
+    display: inline-block; margin-left: 10px; padding: 2px 9px;
+    border-radius: 999px; background: rgba(255,255,255,.18);
+    font-size: .68rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    vertical-align: middle;
+  }
+  .gateway-config {
+    display: flex; gap: 8px; align-items: center; font-size: .82rem;
+    background: rgba(255,255,255,.12); padding: 8px 12px; border-radius: 8px;
+  }
+  .gateway-config label { color: rgba(255,255,255,.85); font-weight: 600; white-space: nowrap; }
+  .gateway-config input {
+    padding: 6px 10px; border: 1px solid transparent; border-radius: 6px;
+    font-size: .82rem; width: 190px; background: rgba(255,255,255,.9); color: var(--text);
+  }
+  .gateway-config button { margin: 0; }
+
+  main { padding: 24px 28px 40px; max-width: 1400px; margin: 0 auto; }
+
+  h2 { font-size: 1rem; margin: 0 0 4px; }
+  .card-desc { color: var(--text-muted); font-size: .8rem; margin: 0 0 16px; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: minmax(300px, 400px) 1fr;
+    gap: 20px;
+    align-items: start;
+  }
+  @media (max-width: 900px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 22px;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 3px rgba(20, 25, 40, .04);
+  }
+  label {
+    display: block; font-size: .78rem; font-weight: 600;
+    margin: 14px 0 5px; color: var(--text-muted);
+  }
+  label:first-of-type { margin-top: 0; }
+  input, select {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--border);
+    border-radius: 7px; font-size: .88rem; background: #fff; color: var(--text);
+  }
+  input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
+
+  .portal-status {
+    display: none; align-items: center; gap: 6px;
+    margin-top: 8px; padding: 7px 10px; border-radius: 7px;
+    font-size: .78rem; font-weight: 600;
+  }
+  .portal-status.show { display: flex; }
+  .portal-status.ok { background: var(--ok-bg); color: var(--ok); }
+  .portal-status.parcial { background: var(--warn-bg); color: var(--warn); }
+  .portal-status.teste { background: var(--neutral-bg); color: var(--neutral); }
+
+  button {
+    cursor: pointer; border: none; border-radius: 7px; padding: 10px 18px;
+    font-size: .88rem; font-weight: 600; background: var(--primary); color: #fff;
+    margin-top: 16px; transition: background .15s;
+  }
+  button:hover { background: var(--primary-dark); }
+  button.secondary { background: var(--neutral-bg); color: var(--text); }
+  button.secondary:hover { background: var(--border); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+
+  .msg { font-size: .82rem; margin-top: 10px; padding: 9px 11px; border-radius: 7px; display: none; }
+  .msg.show { display: block; }
+  .msg.ok { background: var(--ok-bg); color: var(--ok); }
+  .msg.err { background: var(--err-bg); color: var(--err); }
+
+  .resumo-bar {
+    display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px;
+  }
+  .resumo-item {
+    flex: 1; min-width: 100px; background: var(--neutral-bg); border-radius: 8px;
+    padding: 10px 12px; text-align: center;
+  }
+  .resumo-item .num { font-size: 1.3rem; font-weight: 700; display: block; line-height: 1.2; }
+  .resumo-item .lbl { font-size: .7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .03em; }
+  .resumo-item.ok .num { color: var(--ok); }
+  .resumo-item.warn .num { color: var(--warn); }
+  .resumo-item.err .num { color: var(--err); }
+
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--text-muted); font-weight: 600; font-size: .74rem; text-transform: uppercase; letter-spacing: .02em; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #fafbfd; }
+  .mono { font-family: "SF Mono", Consolas, monospace; font-size: .78rem; color: var(--text-muted); }
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 999px;
+    font-size: .74rem; font-weight: 700; white-space: nowrap;
+  }
+  .badge.pendente, .badge.processando { background: var(--warn-bg); color: var(--warn); }
+  .badge.sucesso_confirmado, .badge.sucesso_provavel { background: var(--ok-bg); color: var(--ok); }
+  .badge.erro_portal, .badge.erro_tecnico, .badge.falha_indefinida { background: var(--err-bg); color: var(--err); }
+  .badge.desconhecido { background: var(--neutral-bg); color: var(--neutral); }
+  .row-actions { display: flex; gap: 8px; }
+  .row-actions button { margin-top: 0; padding: 4px 9px; font-size: .74rem; }
+  .empty { color: var(--text-muted); font-size: .85rem; padding: 24px 0; text-align: center; }
+  .mensagem-preview {
+    max-width: 280px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-size: .78rem; color: var(--text-muted); display: inline-block; vertical-align: bottom;
+  }
+  .portal-preview {
+    max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    display: inline-block; vertical-align: bottom;
+  }
+  a.link { color: var(--primary); text-decoration: none; font-size: .78rem; }
+  a.link:hover { text-decoration: underline; }
+
+  .lote-item {
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 8px; margin-top: 10px; padding: 10px 12px;
+    background: var(--neutral-bg); border-radius: 7px; font-size: .78rem;
+  }
+  .lote-item .lote-info { flex: 1 1 180px; }
+  .lote-item > div:last-child { flex-shrink: 0; }
+  .lote-item .lote-info { color: var(--text-muted); }
+  .lote-item .lote-info .mono { display: block; margin-top: 2px; }
+  .lote-item button.btn-download {
+    background: var(--primary); color: #fff; padding: 6px 11px; margin: 0;
+    border-radius: 6px; font-weight: 600; white-space: nowrap; font-size: .78rem;
+  }
+  .lote-item button.btn-download:hover { background: var(--primary-dark); }
+  .lote-item button.remover-lote {
+    margin: 0; padding: 5px 9px; font-size: .72rem;
+  }
+  .campo-pf { display: none; }
+  .campo-pf.show { display: block; }
+  .live-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--ok); margin-right: 6px; animation: pulse 1.6s infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
+
+  .dlq-banner {
+    display: none; margin-bottom: 16px; padding: 12px 16px;
+    background: var(--err-bg); color: var(--err); border-radius: 8px;
+    font-size: .85rem; font-weight: 600;
+    border: 1px solid rgba(178, 51, 36, .25);
+  }
+  .dlq-banner.show { display: block; }
+
+  footer {
+    text-align: center; color: var(--text-muted); font-size: .76rem;
+    padding: 18px 0 30px;
+  }
+</style>
+</head>
+<body>
+
+<div class="app-header">
+  <div class="brand">
+    <div class="brand-icon">📄</div>
+    <div>
+      <h1>Certidões — Painel de Emissão <span class="env-tag">ambiente de testes</span></h1>
+      <p class="subtitle">Cria pedidos (unitário ou em lote) e acompanha o status de emissão em tempo real.</p>
+    </div>
+  </div>
+  <div class="gateway-config">
+    <label>Gateway:</label>
+    <input id="gatewayUrl" type="text" value="http://127.0.0.1:8001">
+    <label>API Key:</label>
+    <input id="apiKey" type="password" placeholder="deixe em branco se não configurada">
+    <button class="secondary" id="btnTestarConexao" style="margin:0;">Testar</button>
+  </div>
+</div>
+
+<main>
+<div class="dlq-banner" id="dlqBanner"></div>
+<div class="grid">
+  <div>
+    <div class="card">
+      <h2>Novo pedido</h2>
+      <p class="card-desc">Emite uma certidão avulsa em um portal específico.</p>
+
+      <label for="f-portal">Portal</label>
+      <select id="f-portal"></select>
+      <div class="portal-status" id="f-portal-status"></div>
+
+      <label for="f-nome">Nome / Razão social</label>
+      <input id="f-nome" type="text" placeholder="Fulano de Tal">
+
+      <label for="f-tipo">Tipo</label>
+      <select id="f-tipo">
+        <option value="pf">PF</option>
+        <option value="pj">PJ</option>
+      </select>
+
+      <label for="f-documento">Documento (CPF/CNPJ, só números)</label>
+      <input id="f-documento" type="text" placeholder="00000000000">
+
+      <label for="f-data" class="campo-pf show">Data de nascimento (dd/mm/aaaa)</label>
+      <input id="f-data" class="campo-pf show" type="text" placeholder="01/01/1990">
+
+      <label for="f-solicitante">Solicitado por</label>
+      <input id="f-solicitante" type="text" placeholder="seu nome (opcional)">
+
+      <button id="btnCriarPedido">Criar pedido</button>
+      <div class="msg" id="msgPedido"></div>
+    </div>
+
+    <div class="card">
+      <h2>Upload de planilha</h2>
+      <p class="card-desc">Emite em lote — uma linha por pedido, mesmo portal para todos.</p>
+
+      <label for="p-portal">Portal</label>
+      <select id="p-portal"></select>
+
+      <label for="p-arquivo">Arquivo (.xlsx — colunas: nome, tipo, documento, data_nascimento)</label>
+      <input id="p-arquivo" type="file" accept=".xlsx">
+
+      <label for="p-solicitante">Solicitado por</label>
+      <input id="p-solicitante" type="text" placeholder="seu nome (opcional)">
+
+      <button id="btnEnviarPlanilha">Enviar planilha</button>
+      <div class="msg" id="msgPlanilha"></div>
+      <div id="listaLotes"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span class="live-dot"></span>Acompanhamento</h2>
+    <p class="card-desc">Atualiza sozinho a cada 5s enquanto houver pedido em andamento.</p>
+
+    <div class="resumo-bar" id="resumoBar"></div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Portal</th>
+          <th>Nome / Doc.</th>
+          <th>Status</th>
+          <th>Mensagem</th>
+          <th>Arquivos</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="tabelaPedidos"></tbody>
+    </table>
+    <div class="empty" id="listaVazia">Nenhum pedido rastreado ainda — crie um pedido ao lado.</div>
+  </div>
+</div>
+</main>
+
+<footer>EmissoesCertidoes — painel provisório para testes internos. Fala direto com o Gateway, sem servidor próprio.</footer>
+
+<script>
+const STORAGE_KEY = "certidoes_pedidos_rastreados";
+const STORAGE_KEY_LOTES = "certidoes_lotes_rastreados";
+const STORAGE_GATEWAY_KEY = "certidoes_gateway_url";
+const STORAGE_APIKEY_KEY = "certidoes_api_key";
+const STATUS_FINAIS = new Set([
+  "sucesso_confirmado", "sucesso_provavel",
+  "erro_portal", "erro_tecnico", "falha_indefinida",
+]);
+
+const el = (id) => document.getElementById(id);
+
+function gatewayUrl() {
+  return el("gatewayUrl").value.replace(/\/$/, "");
+}
+
+function apiKey() {
+  return el("apiKey").value.trim();
+}
+
+// Header de autenticação — se o Gateway não tiver GATEWAY_API_KEY
+// configurada, ele ignora o header, então é seguro mandar sempre que
+// houver algo preenchido no campo.
+function cabecalhosAuth() {
+  const chave = apiKey();
+  return chave ? { "X-API-Key": chave } : {};
+}
+
+function carregarPedidosRastreados() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function salvarPedidosRastreados(lista) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(lista));
+}
+
+function adicionarPedidoRastreado(id) {
+  const lista = carregarPedidosRastreados();
+  if (!lista.includes(id)) {
+    lista.unshift(id);
+    salvarPedidosRastreados(lista);
+  }
+}
+
+function removerPedidoRastreado(id) {
+  salvarPedidosRastreados(carregarPedidosRastreados().filter((x) => x !== id));
+  renderizarTabela({});
+}
+
+function carregarLotesRastreados() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY_LOTES) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function salvarLotesRastreados(lista) {
+  localStorage.setItem(STORAGE_KEY_LOTES, JSON.stringify(lista));
+}
+
+function adicionarLoteRastreado(id, arquivo) {
+  const lista = carregarLotesRastreados();
+  lista.unshift({ id, arquivo, criadoEm: new Date().toLocaleString("pt-BR") });
+  salvarLotesRastreados(lista);
+  renderizarLotes();
+}
+
+function removerLoteRastreado(id) {
+  salvarLotesRastreados(carregarLotesRastreados().filter((l) => l.id !== id));
+  renderizarLotes();
+}
+
+async function baixarRelatorioLote(loteId) {
+  // Não dá pra usar um <a href download> simples aqui: ele não manda o
+  // header X-API-Key, então quebraria com o Gateway autenticado. Busca via
+  // fetch (com o header certo) e dispara o download a partir do blob.
+  try {
+    const resp = await fetch(`${gatewayUrl()}/lotes/${loteId}/relatorio`, { headers: cabecalhosAuth() });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `relatorio_lote_${loteId.slice(0, 8)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (erro) {
+    alert(`Falha ao baixar o relatório: ${erro.message}`);
+  }
+}
+
+function renderizarLotes() {
+  const lotes = carregarLotesRastreados();
+  el("listaLotes").innerHTML = lotes
+    .map(
+      (l) => `
+        <div class="lote-item">
+          <div class="lote-info">
+            Lote de ${l.criadoEm}${l.arquivo ? " — " + l.arquivo : ""}
+            <span class="mono">${l.id.slice(0, 8)}...</span>
+          </div>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <button class="btn-download" onclick="baixarRelatorioLote('${l.id}')">Baixar relatório</button>
+            <button class="secondary remover-lote" onclick="removerLoteRastreado('${l.id}')">remover</button>
+          </div>
+        </div>`
+    )
+    .join("");
+}
+
+function mostrarMsg(elemento, texto, tipo) {
+  elemento.textContent = texto;
+  elemento.className = "msg show " + tipo;
+  setTimeout(() => elemento.classList.remove("show"), 6000);
+}
+
+// Cada portal define seus próprios valores válidos pro campo "Tipo" — a
+// maioria é PF/PJ, mas o TRF4/JFPR pede o tipo de certidão (cível/criminal/
+// eleitoral) nesse mesmo campo. Sem isso, o front só conseguiria mandar
+// "pf"/"pj", que o worker do TRF4 não reconhece (cai no default "civel").
+const TIPO_OPCOES_POR_PORTAL = {
+  trf4_certidao_civel_criminal: [
+    { value: "civel", label: "Cível" },
+    { value: "criminal", label: "Criminal" },
+    { value: "eleitoral", label: "Eleitoral" },
+  ],
+};
+const TIPO_OPCOES_PADRAO = [
+  { value: "pf", label: "PF" },
+  { value: "pj", label: "PJ" },
+];
+
+// Status real de cada worker, mantido manualmente aqui a partir do que já
+// foi validado (ver docs/CATALOGO_PORTAIS.md) — o Gateway só sabe o nome
+// do portal, não o quão maduro o worker está. Sem isso, um colaborador não
+// tem como saber, só olhando o seletor, quais portais já são confiáveis.
+const STATUS_PORTAL = {
+  receita_federal: { nivel: "ok", texto: "✅ Validado de ponta a ponta" },
+  cpf_situacao_cadastral: { nivel: "ok", texto: "✅ Validado de ponta a ponta (com captcha real)" },
+  tst_cndt: { nivel: "ok", texto: "✅ Validado de ponta a ponta (com captcha real)" },
+  curitiba_certidao_cadastro_imovel: { nivel: "ok", texto: "✅ Validado de ponta a ponta (com captcha real)" },
+  curitiba_consulta_debitos_divida_ativa: { nivel: "ok", texto: "✅ Validado de ponta a ponta (com captcha real) — consulta informativa, não é certidão formal" },
+  cnpj_qsa: { nivel: "parcial", texto: "🟡 Submissão funciona, backend rejeita o captcha (investigação em andamento)" },
+  trf4_certidao_civel_criminal: { nivel: "parcial", texto: "🟡 Submissão validada — download final bloqueado por bug do site do TRF4" },
+};
+
+function atualizarOpcoesTipo() {
+  const opcoes = TIPO_OPCOES_POR_PORTAL[el("f-portal").value] || TIPO_OPCOES_PADRAO;
+  const sel = el("f-tipo");
+  sel.innerHTML = "";
+  for (const { value, label } of opcoes) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    sel.appendChild(opt);
+  }
+  atualizarVisibilidadeData();
+  atualizarStatusPortal();
+}
+
+function atualizarStatusPortal() {
+  const info = STATUS_PORTAL[el("f-portal").value] || { nivel: "teste", texto: "🧪 Portal em teste — status ainda não catalogado" };
+  const caixa = el("f-portal-status");
+  caixa.textContent = info.texto;
+  caixa.className = "portal-status show " + info.nivel;
+}
+
+function atualizarVisibilidadeData() {
+  // O TRF4 sempre pede data de nascimento (usada pra conferir contra a
+  // Receita Federal), mesmo pra CNPJ — por isso fica sempre visível nesse
+  // portal, diferente dos demais (só aparece quando tipo === "pf").
+  const sempreVisivel = el("f-portal").value === "trf4_certidao_civel_criminal";
+  el("f-data").classList.toggle("show", sempreVisivel || el("f-tipo").value === "pf");
+}
+
+let portaisCache = {};
+
+async function carregarPortais() {
+  try {
+    const resp = await fetch(`${gatewayUrl()}/portais`, { headers: cabecalhosAuth() });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const portais = await resp.json();
+    portaisCache = portais;
+    const selects = [el("f-portal"), el("p-portal")];
+    selects.forEach((sel) => {
+      sel.innerHTML = "";
+      for (const [chave, label] of Object.entries(portais)) {
+        const opt = document.createElement("option");
+        opt.value = chave;
+        opt.textContent = label;
+        sel.appendChild(opt);
+      }
+    });
+    atualizarOpcoesTipo();
+  } catch (erro) {
+    console.error("Falha ao carregar portais:", erro);
+  }
+}
+
+el("f-portal").addEventListener("change", atualizarOpcoesTipo);
+el("f-tipo").addEventListener("change", atualizarVisibilidadeData);
+
+el("btnTestarConexao").addEventListener("click", async () => {
+  const btn = el("btnTestarConexao");
+  btn.disabled = true;
+  btn.textContent = "Testando...";
+  try {
+    const resp = await fetch(`${gatewayUrl()}/portais`, { headers: cabecalhosAuth() });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    localStorage.setItem(STORAGE_GATEWAY_KEY, gatewayUrl());
+    localStorage.setItem(STORAGE_APIKEY_KEY, apiKey());
+    await carregarPortais();
+    btn.textContent = "OK ✓";
+  } catch {
+    btn.textContent = "Falhou ✕ (confira a API Key)";
+  }
+  setTimeout(() => { btn.textContent = "Testar"; btn.disabled = false; }, 2000);
+});
+
+el("btnCriarPedido").addEventListener("click", async () => {
+  const portal = el("f-portal").value;
+  const nome = el("f-nome").value.trim();
+  const tipo = el("f-tipo").value;
+  const documento = el("f-documento").value.trim();
+  const dataNascimento = el("f-data").value.trim();
+  const solicitadoPor = el("f-solicitante").value.trim();
+  const msgEl = el("msgPedido");
+
+  if (!portal || !nome || !documento) {
+    mostrarMsg(msgEl, "Preencha portal, nome e documento.", "err");
+    return;
+  }
+
+  const form = new FormData();
+  form.append("portal", portal);
+  form.append("nome", nome);
+  form.append("tipo", tipo);
+  form.append("documento", documento);
+  form.append("data_nascimento", dataNascimento);
+  if (solicitadoPor) form.append("solicitado_por", solicitadoPor);
+
+  try {
+    const resp = await fetch(`${gatewayUrl()}/pedidos`, { method: "POST", body: form, headers: cabecalhosAuth() });
+    const dados = await resp.json();
+    if (!resp.ok) throw new Error(dados.detail || "Erro desconhecido");
+    adicionarPedidoRastreado(dados.pedido_id);
+    mostrarMsg(msgEl, `Pedido criado: ${dados.pedido_id.slice(0, 8)}...`, "ok");
+    el("f-documento").value = "";
+    atualizarTabela();
+  } catch (erro) {
+    mostrarMsg(msgEl, `Falha: ${erro.message}`, "err");
+  }
+});
+
+el("btnEnviarPlanilha").addEventListener("click", async () => {
+  const portal = el("p-portal").value;
+  const arquivo = el("p-arquivo").files[0];
+  const solicitadoPor = el("p-solicitante").value.trim();
+  const msgEl = el("msgPlanilha");
+
+  if (!portal || !arquivo) {
+    mostrarMsg(msgEl, "Selecione o portal e o arquivo .xlsx.", "err");
+    return;
+  }
+
+  const form = new FormData();
+  form.append("portal", portal);
+  form.append("planilha", arquivo);
+  if (solicitadoPor) form.append("solicitado_por", solicitadoPor);
+
+  try {
+    const resp = await fetch(`${gatewayUrl()}/pedidos/planilha`, { method: "POST", body: form, headers: cabecalhosAuth() });
+    const dados = await resp.json();
+    if (!resp.ok) throw new Error(dados.detail || "Erro desconhecido");
+    mostrarMsg(
+      msgEl,
+      `Lote criado: ${dados.total_validos} válidos, ${dados.total_erros_validacao} com erro. Lote: ${dados.lote_id.slice(0, 8)}...`,
+      "ok"
+    );
+    adicionarLoteRastreado(dados.lote_id, arquivo.name);
+    // busca os pedidos do lote pra já rastrear todos
+    const loteResp = await fetch(`${gatewayUrl()}/lotes/${dados.lote_id}`, { headers: cabecalhosAuth() });
+    const lote = await loteResp.json();
+    (lote.pedidos || []).forEach((p) => adicionarPedidoRastreado(p.id));
+    el("p-arquivo").value = "";
+    atualizarTabela();
+  } catch (erro) {
+    mostrarMsg(msgEl, `Falha: ${erro.message}`, "err");
+  }
+});
+
+function badgeStatus(status) {
+  const rotulos = {
+    pendente: "Pendente",
+    processando: "Processando",
+    sucesso_confirmado: "Sucesso",
+    sucesso_provavel: "Sucesso (provável)",
+    erro_portal: "Erro do portal",
+    erro_tecnico: "Erro técnico",
+    falha_indefinida: "Falha indefinida",
+  };
+  const classe = status || "desconhecido";
+  const texto = rotulos[status] || status || "?";
+  return `<span class="badge ${classe}">${texto}</span>`;
+}
+
+function nomePortal(chave) {
+  return portaisCache[chave] || chave || "-";
+}
+
+function linkArquivo(caminho, rotulo) {
+  if (!caminho) return "";
+  const nomeArquivo = caminho.split(/[\\/]/).pop();
+  return `<div><span class="mono" title="${caminho}">${rotulo}: ${nomeArquivo}</span></div>`;
+}
+
+let dadosPedidosCache = {};
+
+async function verificarDLQ() {
+  // DLQ não muda tão rápido quanto o status de um pedido — não precisa
+  // conferir a cada 5s junto com a tabela, só de vez em quando.
+  try {
+    const resp = await fetch(`${gatewayUrl()}/dlq/status`, { headers: cabecalhosAuth() });
+    if (!resp.ok) return;
+    const dados = await resp.json();
+    const comProblema = Object.entries(dados).filter(([, contagem]) => contagem > 0);
+    const banner = el("dlqBanner");
+    if (comProblema.length === 0) {
+      banner.classList.remove("show");
+      return;
+    }
+    const detalhe = comProblema.map(([portal, contagem]) => `${nomePortal(portal)} (${contagem})`).join(", ");
+    banner.textContent = `⚠️ Pedidos presos na fila de erro (DLQ), precisam de inspeção manual: ${detalhe}`;
+    banner.classList.add("show");
+  } catch {
+    // silencioso — não queremos travar o front se esse endpoint falhar
+  }
+}
+
+function atualizarResumo() {
+  const ids = carregarPedidosRastreados();
+  const contagem = { pendente: 0, processando: 0, sucesso: 0, erro: 0 };
+  ids.forEach((id) => {
+    const status = (dadosPedidosCache[id] || {}).status;
+    if (status === "pendente") contagem.pendente++;
+    else if (status === "processando") contagem.processando++;
+    else if (status === "sucesso_confirmado" || status === "sucesso_provavel") contagem.sucesso++;
+    else if (status === "erro_portal" || status === "erro_tecnico" || status === "falha_indefinida") contagem.erro++;
+  });
+
+  const itens = [
+    { lbl: "Total", num: ids.length, classe: "" },
+    { lbl: "Em andamento", num: contagem.pendente + contagem.processando, classe: "warn" },
+    { lbl: "Sucesso", num: contagem.sucesso, classe: "ok" },
+    { lbl: "Erro", num: contagem.erro, classe: "err" },
+  ];
+  el("resumoBar").innerHTML = itens
+    .map((i) => `<div class="resumo-item ${i.classe}"><span class="num">${i.num}</span><span class="lbl">${i.lbl}</span></div>`)
+    .join("");
+}
+
+async function atualizarTabela() {
+  const ids = carregarPedidosRastreados();
+  if (ids.length === 0) {
+    renderizarTabela({});
+    atualizarResumo();
+    return;
+  }
+  const resultados = await Promise.all(
+    ids.map(async (id) => {
+      try {
+        const resp = await fetch(`${gatewayUrl()}/pedidos/${id}`, { headers: cabecalhosAuth() });
+        if (!resp.ok) return [id, { id, status: "desconhecido", mensagem: "não encontrado" }];
+        return [id, await resp.json()];
+      } catch {
+        return [id, { id, status: "desconhecido", mensagem: "gateway indisponível" }];
+      }
+    })
+  );
+  dadosPedidosCache = Object.fromEntries(resultados);
+  renderizarTabela(dadosPedidosCache);
+  atualizarResumo();
+}
+
+function renderizarTabela(dados) {
+  const ids = carregarPedidosRastreados();
+  const corpo = el("tabelaPedidos");
+  const vazio = el("listaVazia");
+
+  if (ids.length === 0) {
+    corpo.innerHTML = "";
+    vazio.style.display = "block";
+    return;
+  }
+  vazio.style.display = "none";
+
+  corpo.innerHTML = ids
+    .map((id) => {
+      const p = dados[id] || {};
+      const mensagem = (p.mensagem || "").split("\n").filter(Boolean)[0] || "";
+      return `
+        <tr>
+          <td><span class="portal-preview" title="${nomePortal(p.portal)}">${nomePortal(p.portal)}</span></td>
+          <td>${p.nome || "-"}<br><span class="mono">${p.documento || id.slice(0, 8)}</span></td>
+          <td>${badgeStatus(p.status)}</td>
+          <td><span class="mensagem-preview" title="${(p.mensagem || "").replace(/"/g, "&quot;")}">${mensagem}</span></td>
+          <td>
+            ${linkArquivo(p.caminho_certidao, "certidão")}
+            ${linkArquivo(p.url_evidencia, "evidência")}
+          </td>
+          <td class="row-actions">
+            <button class="secondary" onclick="removerPedidoRastreado('${id}')">remover</button>
+          </td>
+        </tr>`;
+    })
+    .join("");
+}
+
+// inicialização
+(function init() {
+  const gatewaySalvo = localStorage.getItem(STORAGE_GATEWAY_KEY);
+  if (gatewaySalvo) el("gatewayUrl").value = gatewaySalvo;
+  const apiKeySalva = localStorage.getItem(STORAGE_APIKEY_KEY);
+  if (apiKeySalva) el("apiKey").value = apiKeySalva;
+
+  carregarPortais();
+  atualizarTabela();
+  renderizarLotes();
+  verificarDLQ();
+
+  setInterval(() => {
+    const ids = carregarPedidosRastreados();
+    const algumPendente = ids.some((id) => {
+      const status = (dadosPedidosCache[id] || {}).status;
+      return !STATUS_FINAIS.has(status);
+    });
+    if (ids.length === 0) return;
+    atualizarTabela();
+  }, 5000);
+
+  // DLQ muda bem mais devagar que o status de um pedido — confere a
+  // cada 20s em vez de junto com a tabela.
+  setInterval(verificarDLQ, 20000);
+})();
+</script>
+</body>
+</html>

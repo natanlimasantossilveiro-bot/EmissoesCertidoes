@@ -1,0 +1,217 @@
+version: "3.8"
+
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    ports:
+      - "127.0.0.1:5672:5672"   # protocolo AMQP
+      - "127.0.0.1:15672:15672" # painel web (usuário/senha padrão: guest/guest)
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: certidoes
+    ports:
+      - "127.0.0.1:3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  gateway:
+    build:
+      context: .
+      dockerfile: services/gateway/Dockerfile
+    ports:
+      - "127.0.0.1:8001:8000"
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
+      GATEWAY_API_KEY: ${GATEWAY_API_KEY}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+
+  worker-receita-federal:
+    build:
+      context: .
+      dockerfile: services/worker-receita-federal/Dockerfile
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
+      BROWSER_HEADLESS: "true"
+      BROWSER_DOWNLOAD_DIR: /data/downloads
+      STORAGE_LOCAL_PATH: /data/evidencias
+    volumes:
+      - worker_rf_data:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    # Pra ter mais throughput, suba mais réplicas:
+    # docker compose up --scale worker-receita-federal=3
+    deploy:
+      replicas: 1
+
+  worker-cpf:
+    build:
+      context: .
+      dockerfile: services/worker-cpf/Dockerfile
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
+      BROWSER_HEADLESS: "true"
+      BROWSER_DOWNLOAD_DIR: /data/downloads
+      STORAGE_LOCAL_PATH: /data/evidencias
+      TWOCAPTCHA_API_KEY: ${TWOCAPTCHA_API_KEY}
+    volumes:
+      - worker_cpf_data:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+
+  worker-cnpj-qsa:
+    build:
+      context: .
+      dockerfile: services/worker-cnpj-qsa/Dockerfile
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
+      BROWSER_HEADLESS: "true"
+      BROWSER_DOWNLOAD_DIR: /data/downloads
+      STORAGE_LOCAL_PATH: /data/evidencias
+      TWOCAPTCHA_API_KEY: ${TWOCAPTCHA_API_KEY}
+    volumes:
+      - worker_cnpj_qsa_data:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+
+  worker-tst-cndt:
+    build:
+      context: .
+      dockerfile: services/worker-tst-cndt/Dockerfile
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
+      BROWSER_HEADLESS: "true"
+      BROWSER_DOWNLOAD_DIR: /data/downloads
+      STORAGE_LOCAL_PATH: /data/evidencias
+      TWOCAPTCHA_API_KEY: ${TWOCAPTCHA_API_KEY}
+    volumes:
+      - worker_tst_cndt_data:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+
+  worker-trf4-certidao:
+    build:
+      context: .
+      dockerfile: services/worker-trf4-certidao/Dockerfile
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
+      BROWSER_HEADLESS: "true"
+      BROWSER_DOWNLOAD_DIR: /data/downloads
+      STORAGE_LOCAL_PATH: /data/evidencias
+      TWOCAPTCHA_API_KEY: ${TWOCAPTCHA_API_KEY}
+    volumes:
+      - worker_trf4_data:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+
+  worker-curitiba-cadastro-imovel:
+    build:
+      context: .
+      dockerfile: services/worker-curitiba-cadastro-imovel/Dockerfile
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
+      BROWSER_HEADLESS: "true"
+      BROWSER_DOWNLOAD_DIR: /data/downloads
+      STORAGE_LOCAL_PATH: /data/evidencias
+      TWOCAPTCHA_API_KEY: ${TWOCAPTCHA_API_KEY}
+    volumes:
+      - worker_curitiba_imovel_data:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+
+  worker-curitiba-debitos-divida-ativa:
+    build:
+      context: .
+      dockerfile: services/worker-curitiba-debitos-divida-ativa/Dockerfile
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
+      BROWSER_HEADLESS: "true"
+      BROWSER_DOWNLOAD_DIR: /data/downloads
+      STORAGE_LOCAL_PATH: /data/evidencias
+      TWOCAPTCHA_API_KEY: ${TWOCAPTCHA_API_KEY}
+    volumes:
+      - worker_curitiba_debitos_data:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+
+  # Quando o worker do atendenet_pinhais estiver pronto (baseado no
+  # SsaMonitorProcessos), ele entra aqui do mesmo jeito:
+  #
+  # worker-atendenet-pinhais:
+  #   build:
+  #     context: .
+  #     dockerfile: services/worker-atendenet-pinhais/Dockerfile
+  #   environment:
+  #     RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+  #     DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
+  #     TWOCAPTCHA_API_KEY: ${TWOCAPTCHA_API_KEY}
+  #   depends_on:
+  #     rabbitmq: { condition: service_healthy }
+  #     mysql: { condition: service_healthy }
+
+volumes:
+  mysql_data:
+  worker_rf_data:
+  worker_cpf_data:
+  worker_cnpj_qsa_data:
+  worker_tst_cndt_data:
+  worker_trf4_data:
+  worker_curitiba_imovel_data:
+  worker_curitiba_debitos_data:
