@@ -134,6 +134,7 @@
   button.secondary { background: var(--neutral-bg); color: var(--text); }
   button.secondary:hover { background: var(--border); }
   button:disabled { opacity: .5; cursor: not-allowed; }
+  button.small { margin: 2px 0; padding: 4px 9px; font-size: .74rem; }
 
   .msg { font-size: .82rem; margin-top: 10px; padding: 9px 11px; border-radius: 7px; display: none; }
   .msg.show { display: block; }
@@ -261,7 +262,7 @@
     <details>
       <summary>Gateway em outro endereço?</summary>
       <label for="gatewayUrl" style="margin-top:8px">URL do Gateway</label>
-      <input id="gatewayUrl" type="text" value="http://127.0.0.1:8001">
+      <input id="gatewayUrl" type="text" placeholder="em branco = mesmo endereço desta página">
     </details>
   </div>
 </div>
@@ -299,17 +300,17 @@
       <label for="f-nome">Nome / Razão social</label>
       <input id="f-nome" type="text" placeholder="Fulano de Tal">
 
-      <label for="f-tipo">Tipo</label>
+      <label for="f-tipo" id="f-tipo-label">Tipo</label>
       <select id="f-tipo">
         <option value="pf">PF</option>
         <option value="pj">PJ</option>
       </select>
 
-      <label for="f-documento">Documento (CPF/CNPJ, só números)</label>
+      <label for="f-documento" id="f-documento-label">Documento (CPF/CNPJ, só números)</label>
       <input id="f-documento" type="text" placeholder="00000000000">
 
       <label for="f-data" class="campo-pf show">Data de nascimento (dd/mm/aaaa)</label>
-      <input id="f-data" class="campo-pf show" type="text" placeholder="01/01/1990">
+      <input id="f-data" class="campo-pf show" type="text" inputmode="numeric" maxlength="10" placeholder="01/01/1990">
 
       <button id="btnCriarPedido">Criar pedido</button>
       <div class="msg" id="msgPedido"></div>
@@ -370,6 +371,16 @@ const STATUS_FINAIS = new Set([
 ]);
 
 const el = (id) => document.getElementById(id);
+
+// Aberto direto como arquivo (file://) — não tem um "mesmo domínio" pra
+// falar com a API, precisa apontar pro Gateway explicitamente. Servido
+// por um site de verdade (Nginx local, ngrok, VPS em produção) — usa o
+// mesmo endereço da própria página, evitando o bloqueio de "mixed
+// content" que o navegador faz quando a página é HTTPS e a chamada
+// seria pra um endereço HTTP simples feito à mão.
+function origemPadraoGateway() {
+  return location.protocol === "file:" ? "http://127.0.0.1:8001" : "";
+}
 
 function gatewayUrl() {
   return el("gatewayUrl").value.replace(/\/$/, "");
@@ -599,6 +610,36 @@ const TIPO_OPCOES_PADRAO = [
   { value: "pj", label: "PJ" },
 ];
 
+// Portais cujo "documento" não é CPF/CNPJ — o rótulo/placeholder muda, e
+// o campo "Tipo" (PF/PJ) some porque não faz sentido pra eles. Sem isso,
+// o formulário confundia o colaborador a digitar um CPF onde o site
+// pedia Indicação Fiscal do imóvel (aconteceu num teste real).
+const CAMPOS_DOCUMENTO_POR_PORTAL = {
+  curitiba_certidao_cadastro_imovel: {
+    labelDocumento: "Indicação Fiscal do imóvel (só números)",
+    placeholderDocumento: "000000000000",
+    mostrarTipo: false,
+  },
+  curitiba_consulta_debitos_divida_ativa: {
+    labelDocumento: "Indicação Fiscal do imóvel (só números)",
+    placeholderDocumento: "000000000000",
+    mostrarTipo: false,
+  },
+};
+const CAMPOS_DOCUMENTO_PADRAO = {
+  labelDocumento: "Documento (CPF/CNPJ, só números)",
+  placeholderDocumento: "00000000000",
+  mostrarTipo: true,
+};
+
+function atualizarCampoDocumento() {
+  const config = CAMPOS_DOCUMENTO_POR_PORTAL[el("f-portal").value] || CAMPOS_DOCUMENTO_PADRAO;
+  el("f-documento-label").textContent = config.labelDocumento;
+  el("f-documento").placeholder = config.placeholderDocumento;
+  el("f-tipo-label").style.display = config.mostrarTipo ? "" : "none";
+  el("f-tipo").style.display = config.mostrarTipo ? "" : "none";
+}
+
 // Status real de cada worker, mantido manualmente aqui a partir do que já
 // foi validado (ver docs/CATALOGO_PORTAIS.md) — o Gateway só sabe o nome
 // do portal, não o quão maduro o worker está. Sem isso, um colaborador não
@@ -626,6 +667,7 @@ function atualizarOpcoesTipo() {
   }
   atualizarVisibilidadeData();
   atualizarStatusPortal();
+  atualizarCampoDocumento();
 }
 
 function atualizarStatusPortal() {
@@ -640,6 +682,13 @@ function atualizarVisibilidadeData() {
   // Receita Federal), mesmo pra CNPJ — por isso fica sempre visível nesse
   // portal, diferente dos demais (só aparece quando tipo === "pf").
   const sempreVisivel = el("f-portal").value === "trf4_certidao_civel_criminal";
+  // Portais sem campo "Tipo" (ex: Indicação Fiscal de imóvel) também não
+  // pedem data de nascimento — não tem "pessoa" nenhuma envolvida nesses.
+  const config = CAMPOS_DOCUMENTO_POR_PORTAL[el("f-portal").value] || CAMPOS_DOCUMENTO_PADRAO;
+  if (!config.mostrarTipo) {
+    el("f-data").classList.remove("show");
+    return;
+  }
   el("f-data").classList.toggle("show", sempreVisivel || el("f-tipo").value === "pf");
 }
 
@@ -757,11 +806,49 @@ function nomePortal(chave) {
   return portaisCache[chave] || chave || "-";
 }
 
-function linkArquivo(caminho, rotulo) {
+function linkArquivo(caminho, rotulo, pedidoId, tipo) {
   if (!caminho) return "";
   const nomeArquivo = caminho.split(/[\\/]/).pop();
-  return `<div><span class="mono" title="${caminho}">${rotulo}: ${nomeArquivo}</span></div>`;
+  return `<div><button class="secondary small" title="${nomeArquivo}" onclick="baixarArquivoPedido('${pedidoId}', '${tipo}', '${nomeArquivo.replace(/'/g, "\\'")}')">⬇ ${rotulo}</button></div>`;
 }
+
+async function baixarArquivoPedido(pedidoId, tipo, nomeArquivo) {
+  // Mesmo motivo do relatório de lote: um <a href download> simples não
+  // manda o header Authorization, então busca via fetch e dispara o
+  // download a partir do blob.
+  try {
+    const resp = await fetchAutenticado(`${gatewayUrl()}/pedidos/${pedidoId}/${tipo}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = nomeArquivo;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (erro) {
+    alert(`Falha ao baixar o arquivo: ${erro.message}`);
+  }
+}
+
+// Insere as barras sozinho enquanto digita (só números) — evita erro de
+// digitação de formato ("31032006" em vez de "31/03/2006") sem precisar
+// de biblioteca externa.
+function aplicarMascaraData(elemento) {
+  elemento.addEventListener("input", () => {
+    const digitos = elemento.value.replace(/\D/g, "").slice(0, 8);
+    if (digitos.length > 4) {
+      elemento.value = `${digitos.slice(0, 2)}/${digitos.slice(2, 4)}/${digitos.slice(4)}`;
+    } else if (digitos.length > 2) {
+      elemento.value = `${digitos.slice(0, 2)}/${digitos.slice(2)}`;
+    } else {
+      elemento.value = digitos;
+    }
+  });
+}
+aplicarMascaraData(el("f-data"));
 
 let dadosPedidosCache = {};
 
@@ -854,8 +941,8 @@ function renderizarTabela(dados) {
           <td>${badgeStatus(p.status)}</td>
           <td><span class="mensagem-preview" title="${(p.mensagem || "").replace(/"/g, "&quot;")}">${mensagem}</span></td>
           <td>
-            ${linkArquivo(p.caminho_certidao, "certidão")}
-            ${linkArquivo(p.url_evidencia, "evidência")}
+            ${linkArquivo(p.caminho_certidao, "Certidão", id, "certidao")}
+            ${linkArquivo(p.url_evidencia, "Evidência", id, "evidencia")}
           </td>
           <td class="row-actions">
             <button class="secondary" onclick="removerPedidoRastreado('${id}')">remover</button>
@@ -885,7 +972,7 @@ function inicializarApp() {
 // inicialização
 (async function init() {
   const gatewaySalvo = localStorage.getItem(STORAGE_GATEWAY_KEY);
-  if (gatewaySalvo) el("gatewayUrl").value = gatewaySalvo;
+  el("gatewayUrl").value = gatewaySalvo !== null ? gatewaySalvo : origemPadraoGateway();
 
   if (!token()) {
     mostrarLogin();

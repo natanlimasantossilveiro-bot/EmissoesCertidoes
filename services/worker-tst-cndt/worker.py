@@ -25,15 +25,32 @@ Mecânica confirmada por inspeção ao vivo:
   "o PDF da certidão será baixado" — download nativo esperado, diferente
   do CPF/CNPJ+QSA da Receita (que renderizam o comprovante inline).
 
-⚠️ Não validado ainda contra um resultado de sucesso real — só confirmei
-a mecânica de preenchimento e o erro de "documento inválido". Os textos
-de sucesso/débito encontrado em `_interpretar_resultado` são heurísticas
-até aparecer um caso real.
+⚠️ Bug real encontrado num teste com sucesso de verdade (captcha certo,
+documento sem débito): a tela de "Certidão EMITIDA com sucesso" **não é**
+a certidão — é só uma tela de confirmação com botões. O PDF de verdade
+sai de uma navegação automática (`window.parent.location =
+'/emissaoCertidao?pfnc=NNN'`), disparada sozinha por um evento JS antigo
+do RichFaces (`a4j:status onstop`) assim que a certidão é emitida —
+confirmado via CDP Network que esse request acontece SOZINHO, com
+resposta `200`, `content-type: application/pdf` e
+`content-disposition: attachment` (certidão de verdade, token de
+uso único).
+
+O motivo do worker não estar salvando esse PDF: a pasta de download só é
+configurada no Chrome (`page.set_download_path`) depois do clique em
+"Emitir", tarde demais pra pegar esse download automático — o Chrome
+não tinha pra onde salvar e descartava silenciosamente. (Tentei também
+reextrair a URL e rebaixar manualmente depois — não funciona, o token
+já foi consumido pelo download automático, a segunda tentativa sempre
+volta vazia.) Corrigido chamando `set_download_path` ANTES de clicar em
+"Emitir", pra o Chrome já saber onde salvar quando o evento automático
+disparar.
 """
 import asyncio
 import json
 
 from certidoes_core.banco import PedidoCertidao, StatusPedido
+from certidoes_core.config import config
 from certidoes_core.fila import consumir_fila
 from certidoes_core.captcha import obter_resolvedor
 from certidoes_core.automacao.base import ResultadoEmissao
@@ -46,6 +63,11 @@ class TstCndt(AutomacaoNodriverBase):
 
     async def preencher_e_emitir(self, page, pedido: PedidoCertidao) -> ResultadoEmissao:
         pdfs_antes = self._listar_pdfs_downloads()
+        # Precisa vir ANTES do clique em "Emitir" — o download real é
+        # disparado automaticamente pelo próprio site logo depois da
+        # emissão (ver aviso no topo do arquivo), então o Chrome já
+        # precisa saber pra onde salvar nesse momento.
+        await page.set_download_path(config.BROWSER_DOWNLOAD_DIR)
 
         await self._clicar_emitir_certidao_inicial(page)
         await page.wait(3)

@@ -4,9 +4,12 @@ gravar no banco com status PENDENTE, e publicar na fila do portal certo.
 Nunca abre navegador nem espera o resultado — por isso responde rápido
 mesmo com fila cheia.
 """
+from pathlib import Path
+from datetime import datetime, timezone
 from pydantic import BaseModel, EmailStr
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from certidoes_core.banco import (
     get_session, criar_tabelas, PedidoCertidao, LotePlanilha, StatusPedido, Usuario, PapelUsuario,
@@ -48,6 +51,39 @@ PORTAIS_DISPONIVEIS = {
     # próximos portais entram aqui conforme forem sendo automatizados
 }
 
+# Cada worker grava certidão/evidência no PRÓPRIO volume Docker (isolado
+# dos outros containers) — sem isso, o caminho salvo em
+# `caminho_certidao`/`url_evidencia` (ex: "/data/certidoes_emitidas/x.pdf")
+# não existe do ponto de vista do Gateway. O docker-compose.yml monta o
+# volume de cada worker aqui também, só leitura, num subcaminho próprio
+# por portal — isso é só o mapa de qual subcaminho corresponde a qual
+# portal, pra resolver o arquivo certo na hora do download.
+CAMINHO_DADOS_POR_PORTAL = {
+    "receita_federal": "/dados-workers/receita_federal",
+    "cpf_situacao_cadastral": "/dados-workers/cpf_situacao_cadastral",
+    "cnpj_qsa": "/dados-workers/cnpj_qsa",
+    "tst_cndt": "/dados-workers/tst_cndt",
+    "trf4_certidao_civel_criminal": "/dados-workers/trf4_certidao_civel_criminal",
+    "curitiba_certidao_cadastro_imovel": "/dados-workers/curitiba_certidao_cadastro_imovel",
+    "curitiba_consulta_debitos_divida_ativa": "/dados-workers/curitiba_consulta_debitos_divida_ativa",
+    "sefaz_pr_certidao_debitos": "/dados-workers/sefaz_pr_certidao_debitos",
+}
+
+
+def _resolver_arquivo_worker(portal: str, caminho_gravado: str | None) -> Path | None:
+    """Traduz o caminho gravado no banco (visão de dentro do worker, ex:
+    "/data/certidoes_emitidas/x.pdf") pro caminho equivalente dentro do
+    Gateway (visão pelo mount read-only, ex:
+    "/dados-workers/receita_federal/certidoes_emitidas/x.pdf")."""
+    base = CAMINHO_DADOS_POR_PORTAL.get(portal)
+    if not base or not caminho_gravado:
+        return None
+    partes = caminho_gravado.replace("\\", "/").split("/data/", 1)
+    if len(partes) != 2:
+        return None
+    caminho = Path(base) / partes[1]
+    return caminho if caminho.is_file() else None
+
 
 @app.on_event("startup")
 def startup():
@@ -62,6 +98,16 @@ class LoginRequest(BaseModel):
     senha: str
 
 
+def _marcar_utc(dt: datetime | None) -> datetime | None:
+    """Os horários são gravados com `datetime.utcnow()` (sem timezone).
+    Sem marcar explicitamente como UTC aqui, o front recebe um ISO sem
+    'Z'/offset e o navegador interpreta como se já fosse hora local
+    (`new Date(iso)`), mostrando 3h a mais que o horário real de
+    Brasília. Isso só ajusta o dado na saída da API — não mexe no que
+    está gravado no banco."""
+    return dt.replace(tzinfo=timezone.utc) if dt else None
+
+
 def _usuario_para_json(usuario: Usuario) -> dict:
     return {
         "id": usuario.id,
@@ -69,7 +115,7 @@ def _usuario_para_json(usuario: Usuario) -> dict:
         "email": usuario.email,
         "papel": usuario.papel,
         "ativo": usuario.ativo,
-        "ultimo_acesso_em": usuario.ultimo_acesso_em,
+        "ultimo_acesso_em": _marcar_utc(usuario.ultimo_acesso_em),
     }
 
 
@@ -213,7 +259,7 @@ def consultar_atividade(_admin: Usuario = Depends(exigir_admin)):
                         "portal": p.portal,
                         "nome": p.nome,
                         "status": p.status,
-                        "criado_em": p.criado_em,
+                        "criado_em": _marcar_utc(p.criado_em),
                     }
                     for p in pedidos
                 ],
@@ -343,6 +389,28 @@ def consultar_pedido(pedido_id: str, _usuario: Usuario = Depends(obter_usuario_a
             "caminho_certidao": pedido.caminho_certidao,
             "url_evidencia": pedido.url_evidencia,
         }
+
+
+def _baixar_arquivo_pedido(pedido_id: str, campo: str, rotulo: str) -> FileResponse:
+    with get_session() as session:
+        pedido = session.get(PedidoCertidao, pedido_id)
+        if not pedido:
+            raise HTTPException(404, "Pedido não encontrado.")
+        caminho_gravado = getattr(pedido, campo)
+        arquivo = _resolver_arquivo_worker(pedido.portal, caminho_gravado)
+        if not arquivo:
+            raise HTTPException(404, f"Arquivo de {rotulo} não encontrado no servidor.")
+        return FileResponse(arquivo, filename=arquivo.name)
+
+
+@app.get("/pedidos/{pedido_id}/certidao")
+def baixar_certidao(pedido_id: str, _usuario: Usuario = Depends(obter_usuario_atual)):
+    return _baixar_arquivo_pedido(pedido_id, "caminho_certidao", "certidão")
+
+
+@app.get("/pedidos/{pedido_id}/evidencia")
+def baixar_evidencia(pedido_id: str, _usuario: Usuario = Depends(obter_usuario_atual)):
+    return _baixar_arquivo_pedido(pedido_id, "url_evidencia", "evidência")
 
 
 @app.get("/lotes/{lote_id}")

@@ -159,7 +159,9 @@ const STORAGE_USUARIO_KEY = "certidoes_usuario";
 const el = (id) => document.getElementById(id);
 
 function gatewayUrl() {
-  return (localStorage.getItem(STORAGE_GATEWAY_KEY) || "http://127.0.0.1:8001").replace(/\/$/, "");
+  const salvo = localStorage.getItem(STORAGE_GATEWAY_KEY);
+  const padrao = location.protocol === "file:" ? "http://127.0.0.1:8001" : "";
+  return (salvo !== null ? salvo : padrao).replace(/\/$/, "");
 }
 
 function token() {

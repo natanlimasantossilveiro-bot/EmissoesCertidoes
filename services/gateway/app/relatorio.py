@@ -4,10 +4,23 @@ quem subiu 50 pedidos de uma vez e quer um resumo pra baixar, em vez de
 conferir pedido por pedido na tabela do front.
 """
 import io
+from datetime import timezone
+from zoneinfo import ZoneInfo
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
 from certidoes_core.banco import PedidoCertidao
+
+# Gravado no banco como UTC "naive" (datetime.utcnow()) — sem isso, o
+# relatório mostra a hora UTC crua, 3h à frente do horário real de
+# Brasília (mesmo problema corrigido no retorno JSON do main.py).
+FUSO_BRASILIA = ZoneInfo("America/Sao_Paulo")
+
+
+def _para_horario_local(dt):
+    if not dt:
+        return ""
+    return dt.replace(tzinfo=timezone.utc).astimezone(FUSO_BRASILIA).strftime("%d/%m/%Y %H:%M")
 
 STATUS_LABELS = {
     "pendente": "Pendente",
@@ -52,8 +65,8 @@ def gerar_relatorio_lote(pedidos: list[PedidoCertidao]) -> bytes:
             nome_arquivo(pedido.caminho_certidao),
             nome_arquivo(pedido.url_evidencia),
             pedido.usuario.nome if pedido.usuario else "",
-            pedido.criado_em.strftime("%d/%m/%Y %H:%M") if pedido.criado_em else "",
-            pedido.atualizado_em.strftime("%d/%m/%Y %H:%M") if pedido.atualizado_em else "",
+            _para_horario_local(pedido.criado_em),
+            _para_horario_local(pedido.atualizado_em),
         ])
 
     larguras = [8, 28, 18, 8, 20, 45, 32, 32, 18, 16, 16]

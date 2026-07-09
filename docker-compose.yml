@@ -47,6 +47,18 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       ADMIN_SENHA_INICIAL: ${ADMIN_SENHA_INICIAL}
+    volumes:
+      # Cada worker grava certidão/evidência no próprio volume, isolado —
+      # sem isso o Gateway não teria como servir o download desses
+      # arquivos pro front. Só leitura: o Gateway nunca escreve aqui.
+      - worker_rf_data:/dados-workers/receita_federal:ro
+      - worker_cpf_data:/dados-workers/cpf_situacao_cadastral:ro
+      - worker_cnpj_qsa_data:/dados-workers/cnpj_qsa:ro
+      - worker_tst_cndt_data:/dados-workers/tst_cndt:ro
+      - worker_trf4_data:/dados-workers/trf4_certidao_civel_criminal:ro
+      - worker_curitiba_imovel_data:/dados-workers/curitiba_certidao_cadastro_imovel:ro
+      - worker_curitiba_debitos_data:/dados-workers/curitiba_consulta_debitos_divida_ativa:ro
+      - worker_sefaz_pr_data:/dados-workers/sefaz_pr_certidao_debitos:ro
     depends_on:
       rabbitmq:
         condition: service_healthy
