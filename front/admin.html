@@ -59,6 +59,7 @@
   button.secondary { background: var(--neutral-bg); color: var(--text); }
   button.secondary:hover { background: var(--border); }
   button.small { margin: 0; padding: 5px 10px; font-size: .74rem; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
   .msg { font-size: .82rem; margin-top: 10px; padding: 9px 11px; border-radius: 7px; display: none; }
   .msg.show { display: block; }
   .msg.ok { background: var(--ok-bg); color: var(--ok); }
@@ -231,6 +232,19 @@ async function resetarSenha(usuarioId) {
   alert("Senha atualizada.");
 }
 
+async function excluirUsuario(usuarioId, nome) {
+  if (!confirm(`Excluir "${nome}" definitivamente? Essa ação não pode ser desfeita.`)) return;
+  const resp = await fetchAutenticado(`${gatewayUrl()}/admin/usuarios/${usuarioId}`, {
+    method: "DELETE",
+  });
+  const dados = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    alert(dados.detail || "Não foi possível excluir esse usuário.");
+    return;
+  }
+  carregarAtividade();
+}
+
 function alternarDetalhes(usuarioId) {
   const linha = el(`detalhes-${usuarioId}`);
   linha.style.display = linha.style.display === "none" ? "table-row" : "none";
@@ -259,6 +273,11 @@ async function carregarAtividade() {
         <td class="row-actions">
           <button class="secondary small" onclick="alternarAtivo('${usuario.id}', ${usuario.ativo})">${usuario.ativo ? "Desativar" : "Ativar"}</button>
           <button class="secondary small" onclick="resetarSenha('${usuario.id}')">Resetar senha</button>
+          ${usuario.id === (usuarioAtual() || {}).id ? "" : `
+            <button class="secondary small" title="${total_pedidos > 0 ? 'Usuário tem pedidos no histórico — desative em vez de excluir' : ''}"
+              ${total_pedidos > 0 ? "disabled" : ""}
+              onclick="excluirUsuario('${usuario.id}', '${usuario.nome.replace(/'/g, "\\'")}')">Excluir</button>
+          `}
         </td>
       </tr>
       <tr id="detalhes-${usuario.id}" style="display:none">

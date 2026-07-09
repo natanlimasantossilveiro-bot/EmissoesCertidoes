@@ -162,6 +162,32 @@ def atualizar_usuario(usuario_id: str, dados: AtualizarUsuarioRequest, _admin: U
         return _usuario_para_json(usuario)
 
 
+@app.delete("/admin/usuarios/{usuario_id}")
+def excluir_usuario(usuario_id: str, admin: Usuario = Depends(exigir_admin)):
+    if usuario_id == admin.id:
+        raise HTTPException(400, "Você não pode excluir a própria conta.")
+
+    with get_session() as session:
+        usuario = session.get(Usuario, usuario_id)
+        if not usuario:
+            raise HTTPException(404, "Usuário não encontrado.")
+
+        total_pedidos = (
+            session.query(PedidoCertidao).filter_by(usuario_id=usuario_id).count()
+            + session.query(LotePlanilha).filter_by(usuario_id=usuario_id).count()
+        )
+        if total_pedidos > 0:
+            raise HTTPException(
+                400,
+                "Esse usuário já tem pedidos no histórico — exclua não é permitido "
+                "pra não perder o registro de quem pediu o quê. Use \"Desativar\" em vez disso.",
+            )
+
+        session.delete(usuario)
+        session.commit()
+    return {"ok": True}
+
+
 @app.get("/admin/atividade")
 def consultar_atividade(_admin: Usuario = Depends(exigir_admin)):
     """Pedidos agrupados por usuário — junto com `GET /admin/usuarios`
