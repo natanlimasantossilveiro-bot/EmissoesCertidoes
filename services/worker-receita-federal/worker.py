@@ -30,15 +30,40 @@ site mudou depois da primeira validação deste worker), corrigidas aqui:
    (bypassa o setter que o framework possa ter sobrescrito) e disparando
    input+change+blur.
 
-Depois dessas correções, a submissão volta a funcionar (confirmado: o
-formulário aceita os dados e a Receita Federal processa a solicitação de
-verdade). Não foi possível confirmar um `sucesso_confirmado` completo na
-mesma sessão porque o CPF de teste reutilizado à exaustão neste projeto
-esbarrou num erro genérico da Receita Federal ("023 - tente novamente
-dentro de alguns minutos", repetido em 2 tentativas seguidas) — tudo
-indica ser um bloqueio temporário de anti-abuso específico desse CPF
-nesse serviço (o mesmo CPF funcionou normalmente no worker de CPF —
-Situação Cadastral na mesma sessão), não um problema de código.
+⚠️ **Problema real, ainda em aberto** — a submissão retorna
+consistentemente um erro genérico da Receita ("023 - tente novamente
+dentro de alguns minutos"), em múltiplas tentativas, com CPFs diferentes,
+mesmo rodando com tela (não-headless) via Xvfb dentro do container.
+
+Comparado ao vivo contra um projeto irmão (`Certidoes_PF_PR/Certidao_Conjunta`,
+mesma lógica de automação, mas rodando nativo no Windows, sem Docker):
+rodando esse projeto irmão na mesma máquina/rede, com o MESMO CPF que
+falhava aqui, a emissão funcionou de primeira — duas vezes seguidas,
+minutos depois de duas falhas daqui. Isso descarta IP/rede e frequência
+de tentativa como causa.
+
+Já testado e descartado como causa isolada:
+- Modo headless vs. com tela (Xvfb) — mesmo erro nos dois.
+- Flag `--no-sandbox` do Chromium — testado rodando o container como
+  usuário comum + `cap_add: SYS_ADMIN` (permitindo o sandbox real do
+  Chrome funcionar dentro do Docker) — mesmo erro 023 mesmo assim.
+- Chromium open-source (Debian) vs. Google Chrome de verdade — testado
+  instalando o `google-chrome-stable` oficial dentro do container —
+  mesmo erro 023 mesmo assim.
+
+Ambos os testes acima foram revertidos (ver histórico do
+worker.py/Dockerfile/docker-compose.yml) — nenhum resolveu, então não
+valia manter a complexidade extra sem benefício.
+
+O que sobra: o ambiente Linux/Docker em si (não o navegador específico)
+parece ser o que essa proteção da Receita detecta — algo mais profundo
+que flag de navegador não resolve. Único caminho ainda não testado:
+rodar esse worker específico fora do Docker (o projeto irmão citado
+acima roda assim, nativo no Windows, e funciona toda vez). Isso é uma
+exceção arquitetural real — vale a pena confirmar primeiro se o mesmo
+problema também acontece rodando Linux nativo (fora do Docker, ex: via
+WSL2 direto) antes de decidir se a exceção precisa ser "roda fora do
+Docker" ou especificamente "roda fora do Linux".
 """
 import asyncio
 import json

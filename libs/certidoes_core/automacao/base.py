@@ -72,4 +72,4 @@ class AutomacaoPortal(ABC):
         return resultado.status != StatusPedido.ERRO_TECNICO
 
     def nome_arquivo_certidao(self, pedido: PedidoCertidao) -> str:
-        return gerar_nome_certidao(pedido.nome, self.portal, pedido.documento)
+        return gerar_nome_certidao(pedido.nome, self.portal, pedido.documento, tipo=pedido.tipo)

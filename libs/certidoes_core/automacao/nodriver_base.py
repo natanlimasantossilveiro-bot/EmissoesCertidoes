@@ -93,6 +93,14 @@ class AutomacaoNodriverBase(AutomacaoPortal):
     espera_inicial_segundos: int = 3  # portais mais pesados (ex: SPA Angular) podem sobrescrever
     usar_hook_hcaptcha_callback: bool = False  # ver HOOK_SCRIPT_HCAPTCHA_CALLBACK acima
     usar_hook_recaptcha_enterprise_callback: bool = False  # ver HOOK_SCRIPT_RECAPTCHA_ENTERPRISE_CALLBACK acima
+    # `--no-sandbox` é uma flag que só automação/servidor usa — nenhum
+    # usuário comum roda o Chrome assim, e é um sinal conhecido de
+    # detecção antifraude (confirmado contra a Receita Federal: o mesmo
+    # CPF que apanhava dentro do container funcionou de primeira rodando
+    # nativo, sem essa flag). Container que roda como root PRECISA dela
+    # (Chromium recusa abrir); um worker cujo Dockerfile roda como
+    # usuário comum pode e deve setar isso como False.
+    requer_no_sandbox: bool = True
 
     @abstractmethod
     async def preencher_e_emitir(self, page, pedido: PedidoCertidao) -> ResultadoEmissao:
@@ -101,15 +109,16 @@ class AutomacaoNodriverBase(AutomacaoPortal):
         evidência nem com abrir/fechar navegador — a base cuida disso."""
 
     async def executar(self, pedido: PedidoCertidao) -> ResultadoEmissao:
+        browser_args = [
+            f"--download-directory={config.BROWSER_DOWNLOAD_DIR}",
+            "--disable-dev-shm-usage",
+            *self.browser_args_extra,
+        ]
+        if self.requer_no_sandbox:
+            browser_args.insert(1, "--no-sandbox")
         browser = await nd.start(
             headless=config.BROWSER_HEADLESS,
-            browser_args=[
-                f"--download-directory={config.BROWSER_DOWNLOAD_DIR}",
-                # container roda como root; Chromium recusa iniciar sem isso
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                *self.browser_args_extra,
-            ],
+            browser_args=browser_args,
         )
         try:
             page = await browser.get("about:blank")

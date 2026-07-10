@@ -45,9 +45,7 @@ PORTAIS_DISPONIVEIS = {
     "curitiba_certidao_cadastro_imovel": "Certidão de Cadastro de Imóvel - Prefeitura de Curitiba",
     "curitiba_consulta_debitos_divida_ativa": "Consulta de Débitos - Dívida Ativa - Prefeitura de Curitiba",
     "sefaz_pr_certidao_debitos": "Certidão de Débitos Tributários e Dívida Ativa - SEFAZ PR",
-    # atendenet_pinhais entra aqui quando o worker existir de fato — listar
-    # sem worker deixa o pedido "pendente" pra sempre, sem ninguém consumindo
-    # a fila, o que parece bug numa demonstração
+    "atendenet_pinhais_cnd": "Certidão Negativa de Débitos (CND) - Prefeitura de Pinhais",
     # próximos portais entram aqui conforme forem sendo automatizados
 }
 
@@ -67,6 +65,7 @@ CAMINHO_DADOS_POR_PORTAL = {
     "curitiba_certidao_cadastro_imovel": "/dados-workers/curitiba_certidao_cadastro_imovel",
     "curitiba_consulta_debitos_divida_ativa": "/dados-workers/curitiba_consulta_debitos_divida_ativa",
     "sefaz_pr_certidao_debitos": "/dados-workers/sefaz_pr_certidao_debitos",
+    "atendenet_pinhais_cnd": "/dados-workers/atendenet_pinhais_cnd",
 }
 
 

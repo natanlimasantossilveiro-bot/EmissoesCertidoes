@@ -59,6 +59,7 @@ services:
       - worker_curitiba_imovel_data:/dados-workers/curitiba_certidao_cadastro_imovel:ro
       - worker_curitiba_debitos_data:/dados-workers/curitiba_consulta_debitos_divida_ativa:ro
       - worker_sefaz_pr_data:/dados-workers/sefaz_pr_certidao_debitos:ro
+      - worker_atendenet_pinhais_data:/dados-workers/atendenet_pinhais_cnd:ro
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -242,21 +243,26 @@ services:
     deploy:
       replicas: 1
 
-  # Quando o worker do atendenet_pinhais estiver pronto (baseado no
-  # SsaMonitorProcessos), ele entra aqui do mesmo jeito:
-  #
-  # worker-atendenet-pinhais:
-  #   build:
-  #     context: .
-  #     dockerfile: services/worker-atendenet-pinhais/Dockerfile
-  #   restart: unless-stopped
-  #   environment:
-  #     RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-  #     DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
-  #     TWOCAPTCHA_API_KEY: ${TWOCAPTCHA_API_KEY}
-  #   depends_on:
-  #     rabbitmq: { condition: service_healthy }
-  #     mysql: { condition: service_healthy }
+  worker-atendenet-pinhais:
+    build:
+      context: .
+      dockerfile: services/worker-atendenet-pinhais/Dockerfile
+    restart: unless-stopped
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
+      BROWSER_HEADLESS: "true"
+      BROWSER_DOWNLOAD_DIR: /data/downloads
+      STORAGE_LOCAL_PATH: /data/evidencias
+    volumes:
+      - worker_atendenet_pinhais_data:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    deploy:
+      replicas: 1
 
 volumes:
   mysql_data:
@@ -269,3 +275,4 @@ volumes:
   worker_curitiba_imovel_data:
   worker_curitiba_debitos_data:
   worker_sefaz_pr_data:
+  worker_atendenet_pinhais_data:

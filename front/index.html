@@ -309,7 +309,7 @@
       <label for="f-documento" id="f-documento-label">Documento (CPF/CNPJ, só números)</label>
       <input id="f-documento" type="text" placeholder="00000000000">
 
-      <label for="f-data" class="campo-pf show">Data de nascimento (dd/mm/aaaa)</label>
+      <label for="f-data" id="f-data-label" class="campo-pf show">Data de nascimento (dd/mm/aaaa)</label>
       <input id="f-data" class="campo-pf show" type="text" inputmode="numeric" maxlength="10" placeholder="01/01/1990">
 
       <button id="btnCriarPedido">Criar pedido</button>
@@ -610,26 +610,75 @@ const TIPO_OPCOES_PADRAO = [
   { value: "pj", label: "PJ" },
 ];
 
-// Portais cujo "documento" não é CPF/CNPJ — o rótulo/placeholder muda, e
-// o campo "Tipo" (PF/PJ) some porque não faz sentido pra eles. Sem isso,
-// o formulário confundia o colaborador a digitar um CPF onde o site
-// pedia Indicação Fiscal do imóvel (aconteceu num teste real).
+// Config por portal, com base exata no que cada worker usa de verdade
+// (conferido no código, não só na planilha de levantamento) — evita
+// mostrar campo que o portal não pede (ex: Data de nascimento numa
+// consulta que só usa CNPJ) ou esconder um que ele exige (ex: TRF4,
+// que sempre pede data mesmo pra CNPJ).
+// mostrarData: "sempre" | "nunca" | "auto" (auto = só aparece se Tipo === "pf")
 const CAMPOS_DOCUMENTO_POR_PORTAL = {
+  cpf_situacao_cadastral: {
+    // Serviço só existe pra pessoa física — sem opção de CNPJ no site.
+    labelDocumento: "CPF (só números)",
+    placeholderDocumento: "00000000000",
+    mostrarTipo: false,
+    mostrarData: "sempre",
+  },
+  cnpj_qsa: {
+    // Serviço só existe pra pessoa jurídica — sem opção de CPF no site.
+    labelDocumento: "CNPJ (só números)",
+    placeholderDocumento: "00000000000000",
+    mostrarTipo: false,
+    mostrarData: "nunca",
+  },
+  tst_cndt: {
+    // Aceita CPF ou CNPJ no mesmo campo, mas o worker nunca usa data de
+    // nascimento (confirmado no código — só usa `pedido.documento`).
+    labelDocumento: "CPF ou CNPJ (só números)",
+    placeholderDocumento: "00000000000",
+    mostrarTipo: false,
+    mostrarData: "nunca",
+  },
+  sefaz_pr_certidao_debitos: {
+    labelDocumento: "CPF ou CNPJ (só números)",
+    placeholderDocumento: "00000000000",
+    mostrarTipo: false,
+    mostrarData: "nunca",
+  },
+  trf4_certidao_civel_criminal: {
+    // "Tipo" aqui já é Cível/Criminal/Eleitoral (ver TIPO_OPCOES_POR_PORTAL)
+    // — mantém visível, só a regra de data muda (sempre pede, mesmo PJ).
+    labelDocumento: "CPF/CNPJ (só números)",
+    placeholderDocumento: "00000000000",
+    mostrarTipo: true,
+    mostrarData: "sempre",
+  },
   curitiba_certidao_cadastro_imovel: {
     labelDocumento: "Indicação Fiscal do imóvel (só números)",
     placeholderDocumento: "000000000000",
     mostrarTipo: false,
+    mostrarData: "nunca",
   },
   curitiba_consulta_debitos_divida_ativa: {
     labelDocumento: "Indicação Fiscal do imóvel (só números)",
     placeholderDocumento: "000000000000",
     mostrarTipo: false,
+    mostrarData: "nunca",
+  },
+  atendenet_pinhais_cnd: {
+    labelDocumento: "CPF ou CNPJ (só números)",
+    placeholderDocumento: "00000000000",
+    mostrarTipo: false,
+    mostrarData: "nunca",
   },
 };
+// receita_federal cai aqui — é o único portal onde o campo muda de
+// verdade com o Tipo escolhido (PF pede CPF+data, PJ só CNPJ).
 const CAMPOS_DOCUMENTO_PADRAO = {
   labelDocumento: "Documento (CPF/CNPJ, só números)",
   placeholderDocumento: "00000000000",
   mostrarTipo: true,
+  mostrarData: "auto",
 };
 
 function atualizarCampoDocumento() {
@@ -645,7 +694,7 @@ function atualizarCampoDocumento() {
 // do portal, não o quão maduro o worker está. Sem isso, um colaborador não
 // tem como saber, só olhando o seletor, quais portais já são confiáveis.
 const STATUS_PORTAL = {
-  receita_federal: { nivel: "ok", texto: "✅ Validado de ponta a ponta" },
+  receita_federal: { nivel: "parcial", texto: "🟡 Bloqueado rodando em Docker — a Receita recusa esse serviço específico nesse ambiente. Emissão manual por enquanto" },
   cpf_situacao_cadastral: { nivel: "ok", texto: "✅ Validado de ponta a ponta (com captcha real)" },
   tst_cndt: { nivel: "ok", texto: "✅ Validado de ponta a ponta (com captcha real)" },
   curitiba_certidao_cadastro_imovel: { nivel: "ok", texto: "✅ Validado de ponta a ponta (com captcha real)" },
@@ -653,6 +702,7 @@ const STATUS_PORTAL = {
   cnpj_qsa: { nivel: "parcial", texto: "🟡 Submissão funciona, backend rejeita o captcha (investigação em andamento)" },
   trf4_certidao_civel_criminal: { nivel: "parcial", texto: "🟡 Submissão validada — download final bloqueado por bug do site do TRF4" },
   sefaz_pr_certidao_debitos: { nivel: "parcial", texto: "🟡 2captcha não consegue resolver o captcha desse portal ainda" },
+  atendenet_pinhais_cnd: { nivel: "parcial", texto: "🟡 Sem captcha, caminho de \"não encontrado\" validado — caminho de sucesso ainda não confirmado com CPF/CNPJ real de Pinhais" },
 };
 
 function atualizarOpcoesTipo() {
@@ -678,18 +728,15 @@ function atualizarStatusPortal() {
 }
 
 function atualizarVisibilidadeData() {
-  // O TRF4 sempre pede data de nascimento (usada pra conferir contra a
-  // Receita Federal), mesmo pra CNPJ — por isso fica sempre visível nesse
-  // portal, diferente dos demais (só aparece quando tipo === "pf").
-  const sempreVisivel = el("f-portal").value === "trf4_certidao_civel_criminal";
-  // Portais sem campo "Tipo" (ex: Indicação Fiscal de imóvel) também não
-  // pedem data de nascimento — não tem "pessoa" nenhuma envolvida nesses.
   const config = CAMPOS_DOCUMENTO_POR_PORTAL[el("f-portal").value] || CAMPOS_DOCUMENTO_PADRAO;
-  if (!config.mostrarTipo) {
-    el("f-data").classList.remove("show");
-    return;
-  }
-  el("f-data").classList.toggle("show", sempreVisivel || el("f-tipo").value === "pf");
+  const mostrar =
+    config.mostrarData === "sempre" ? true :
+    config.mostrarData === "nunca" ? false :
+    // "auto" — só pede data quando faz sentido pra pessoa física (hoje,
+    // só a Receita Federal varia de verdade com o Tipo escolhido).
+    el("f-tipo").value === "pf";
+  el("f-data").classList.toggle("show", mostrar);
+  el("f-data-label").classList.toggle("show", mostrar);
 }
 
 let portaisCache = {};

@@ -33,18 +33,29 @@ Consolidado depois da varredura de reconhecimento em todos os ⚪
 restantes. Da mais fácil (já pronta) pra mais difícil:
 
 **Tier 0 — Automatizados e validados de ponta a ponta (✅)**
-1. Certidão Conjunta (Receita Federal)
-2. CPF — Situação Cadastral (Receita Federal) — hCaptcha resolvido de verdade
-3. CNDT — Débitos Trabalhistas (TST) — captcha de imagem simples
-4. Certidão de Cadastro de Imóvel (Curitiba) — captcha de imagem simples,
+1. CPF — Situação Cadastral (Receita Federal) — hCaptcha resolvido de verdade
+2. CNDT — Débitos Trabalhistas (TST) — captcha de imagem simples
+3. Certidão de Cadastro de Imóvel (Curitiba) — captcha de imagem simples,
    confirmado com dado real fornecido pelo usuário
-5. Consulta de Débitos/Dívida Ativa (Curitiba) — mesma plataforma/captcha
-   do item 4, validado com dado real (sem débito e, numa tentativa
+4. Consulta de Débitos/Dívida Ativa (Curitiba) — mesma plataforma/captcha
+   do item 3, validado com dado real (sem débito e, numa tentativa
    anterior, com débito — as duas mensagens diferentes foram
    confirmadas). É consulta informativa, não uma certidão formal, mas
    automatizada a pedido do usuário
 
 **Tier 1 — Construído, falta só destravar (🟡)**
+5. Certidão Conjunta (Receita Federal) — submissão funciona (preenche e
+   envia certinho), mas esse serviço específico bloqueia consistentemente
+   com erro genérico ("023 - tente novamente") **só quando rodado dentro
+   de Docker/Linux** — confirmado com um projeto irmão que roda a mesma
+   lógica nativo no Windows e funciona toda vez. Testado e descartado:
+   IP/rede, CPF específico, frequência, headless vs. com tela,
+   `--no-sandbox`, Chromium vs. Chrome real — nenhum resolveu. Sobra o
+   ambiente Linux/Docker em si. Corrigir exigiria rodar esse worker fora
+   do Docker (numa máquina Windows sempre ligada) — **despriorizado por
+   enquanto** (sem máquina disponível pra isso); emissão manual continua
+   sendo o caminho pra esse portal específico. Ver aviso no topo de
+   `services/worker-receita-federal/worker.py`
 6. CNPJ+QSA (Receita Federal) — mecânica funciona, backend rejeita o
    token do captcha (suspeita de validação de IP)
 7. Certidão Cível/Criminal JFPR (TRF4) — submissão 100% validada com
@@ -60,6 +71,21 @@ restantes. Da mais fácil (já pronta) pra mais difícil:
    invisível parece ser difícil demais pro serviço de resolução atual.
    Não depende de código nosso; precisaria trocar de provedor de captcha
    pra ter alguma chance
+9. Certidão Negativa de Débitos (Atende.Net — Prefeitura de Pinhais) —
+   primeiro portal na plataforma Atende.Net. Achado num reconhecimento
+   novo (serviço "Certidão Negativa de Débitos", separado da "Consulta
+   de Processo Digital" que já tinha código de referência pronto).
+   **Sem captcha em nenhum ponto do fluxo** — mais simples que os outros
+   portais construídos até agora. Caminho de "CPF/CNPJ não é contribuinte
+   de Pinhais" validado de ponta a ponta, inclusive rodando em Docker.
+   Caminho de sucesso (contribuinte de verdade) ainda não validado —
+   nenhum documento de teste disponível é contribuinte de Pinhais — e
+   esbarrou no **mesmo bloqueio de ambiente Linux/Docker** já visto na
+   Receita Federal (alerta antifraude genérico só rodando em container;
+   fluxo idêntico nativo no Windows passa limpo). Mesma decisão: worker
+   construído e documentado, despriorizado por falta de máquina Windows
+   sempre ligada. Ver aviso no topo de
+   `services/worker-atendenet-pinhais/worker.py`
 
 **Tier 2 — vago.** Nenhum portal 🟢 "pronto pra construir agora" sobrou na
 varredura atual.
@@ -108,7 +134,7 @@ reabra a discussão:
 
 | # | Portal | Usado em | URL | Status |
 |---|---|---|---|---|
-| 1 | Receita Federal — Certidão Conjunta | PF/PJ | `servicos.receitafederal.gov.br` | ✅ Automatizado |
+| 1 | Receita Federal — Certidão Conjunta | PF/PJ | `servicos.receitafederal.gov.br` | 🟡 Construído e validado manualmente (fora do Docker), mas bloqueado rodando dentro do container — erro genérico da Receita só nesse ambiente. Despriorizado, emissão manual por enquanto. Ver `services/worker-receita-federal/worker.py` |
 | 2 | Receita Federal — CPF (situação cadastral) | PF | `servicos.receita.fazenda.gov.br/servicos/cpf/consultasituacao/consultapublica.asp` | ✅ Automatizado e **validado de ponta a ponta** com captcha real (hCaptcha, não reCAPTCHA como o catálogo original supunha) — comprovante emitido e PDF gerado corretamente |
 | 3 | Receita Federal — CNPJ+QSA (cnpjreva) | PJ | `solucoes.receita.fazenda.gov.br/servicos/cnpjreva/cnpjreva_solicitacao.asp` | 🟡 Construído, mas **bloqueado** — o backend rejeita o token do hCaptcha mesmo com a submissão funcionando corretamente (hipótese de reCAPTCHA descartada). Provável causa: validação de IP entre quem resolve o captcha e quem submete, exigindo proxy. Ver aviso no topo de `services/worker-cnpj-qsa/worker.py` |
 | 4 | Pesquisa Protesto (CENPROT) | PF/PJ | `pesquisaprotesto.com.br` | ❌ **Eliminado da fila** (decisão do escritório) — login/certificado digital, entrega assíncrona (até 60 dias) |
@@ -134,6 +160,7 @@ reabra a discussão:
 | 24 | Certidão de Débitos do Imóvel/IPTU | Imóvel | `cnd-cidadao.curitiba.pr.gov.br/Certidao/Solicitar` | 🔴 Mesmo domínio do item 6 — bloqueado por Akamai. Despriorizado |
 | 25 | Certidão de Cadastro (Curitiba) | Imóvel | `declaracaounificadaimovel.curitiba.pr.gov.br/` (link antigo da planilha, com token de sessão, estava morto — abrir direto na raiz funciona) | ✅ Automatizado e **validado de ponta a ponta** com captcha real e dado real (Indicação Fiscal fornecida pelo usuário) — captcha de imagem simples, PDF final baixado corresponde exatamente à declaração de referência (mesmo endereço/bairro/histórico). Ver `services/worker-curitiba-cadastro-imovel/worker.py` |
 | 26 | Consulta de Débitos (parcelamento) | Imóvel | `parcelamentoexecutado.curitiba.pr.gov.br/` (idem — abrir na raiz gera sessão nova automaticamente) | ✅ Automatizado e **validado de ponta a ponta** com captcha real e dado real — mesma plataforma/captcha do item 25 (`worker-curitiba-debitos-divida-ativa`). É consulta informativa de débitos em dívida ativa, não uma certidão formal, mas automatizada a pedido do usuário. Confirmadas as duas mensagens de resultado (com e sem débito) |
+| 27 | Certidão Negativa de Débitos (Prefeitura de Pinhais) | PF/PJ | `pinhais.atende.net/autoatendimento/servicos/certidao-negativa-de-debitos` | 🟡 Construído (`worker-atendenet-pinhais`), sem captcha em todo o fluxo. Caminho de "CPF/CNPJ não é contribuinte" validado de ponta a ponta, inclusive em Docker. Caminho de sucesso não confirmado (sem documento de teste que seja contribuinte de Pinhais) e esbarrou no mesmo bloqueio de ambiente Linux/Docker já visto no item 1 — despriorizado pelo mesmo motivo |
 
 ## Checklist de reconhecimento (2 min por portal)
 

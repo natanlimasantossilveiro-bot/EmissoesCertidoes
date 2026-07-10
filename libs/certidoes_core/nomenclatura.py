@@ -16,5 +16,37 @@ def normalizar_nome_arquivo(texto: str) -> str:
     return texto.upper() or "SEM_NOME"
 
 
-def gerar_nome_certidao(nome_pessoa: str, portal: str, documento: str, extensao: str = "pdf") -> str:
-    return f"{normalizar_nome_arquivo(nome_pessoa)}_{portal}_{documento}.{extensao}"
+# Convenção de pasta/nome que o escritório já usa manualmente (planilha
+# de levantamento feita pela colaboradora que mais usa o sistema) — troca
+# o slug técnico do portal (ex: "receita_federal") por um rótulo
+# reconhecível (ex: "Tributo Federal") no nome do arquivo final, pra quem
+# já está acostumado com esse padrão não estranhar na transição.
+NOME_PASTA_POR_PORTAL = {
+    "receita_federal": "Tributo Federal",
+    "cpf_situacao_cadastral": "CPF",
+    "tst_cndt": "Débitos Trabalhistas",
+    "curitiba_certidao_cadastro_imovel": "Certidão de Cadastro",
+    "curitiba_consulta_debitos_divida_ativa": "Consulta de Débitos",
+    "sefaz_pr_certidao_debitos": "Tributo Estadual",
+    "atendenet_pinhais_cnd": "Tributo Municipal Pinhais",
+}
+
+# O TRF4 tem um rótulo diferente por tipo de certidão (mesmo portal) —
+# a colaboradora distingue "Certidão Criminal JFPR" de "Certidão Cível
+# JFPR" na pasta, então usamos o campo "tipo" do pedido pra escolher.
+NOME_PASTA_TRF4_POR_TIPO = {
+    "civel": "Certidão Cível JFPR",
+    "criminal": "Certidão Criminal JFPR",
+    "eleitoral": "Certidão Eleitoral JFPR",
+}
+
+
+def _rotulo_portal(portal: str, tipo: str | None) -> str:
+    if portal == "trf4_certidao_civel_criminal" and tipo in NOME_PASTA_TRF4_POR_TIPO:
+        return NOME_PASTA_TRF4_POR_TIPO[tipo]
+    return NOME_PASTA_POR_PORTAL.get(portal, portal)
+
+
+def gerar_nome_certidao(nome_pessoa: str, portal: str, documento: str, extensao: str = "pdf", tipo: str | None = None) -> str:
+    rotulo = normalizar_nome_arquivo(_rotulo_portal(portal, tipo))
+    return f"{normalizar_nome_arquivo(nome_pessoa)}_{rotulo}_{documento}.{extensao}"

@@ -159,7 +159,17 @@ tocar em nada que já existe**. Passo a passo:
       nesse ambiente) — é visibilidade direta no painel. Testado num
       navegador real com mensagens reais na DLQ (deixadas por falhas de
       teste anteriores nesta mesma sessão)
-- [ ] Migrar o worker do Atende.Net a partir do `SsaMonitorProcessos`
+- [x] **Worker do Atende.Net (Prefeitura de Pinhais)** — construído do zero
+      (`worker-atendenet-pinhais`), não a partir do `SsaMonitorProcessos`
+      (aquele código era pra consulta de processo, não emissão de
+      certidão). Achado um serviço novo, "Certidão Negativa de Débitos",
+      sem captcha em nenhum ponto do fluxo. Caminho de "não é
+      contribuinte" validado de ponta a ponta, inclusive em Docker.
+      Caminho de sucesso não validado (sem CPF/CNPJ de teste que seja
+      contribuinte de Pinhais) e esbarrou no mesmo bloqueio de ambiente
+      Linux/Docker do worker da Receita Federal — despriorizado pelo
+      mesmo motivo. Ver `docs/CATALOGO_PORTAIS.md` e o aviso no topo de
+      `services/worker-atendenet-pinhais/worker.py`
 - [x] **Reteste dos portais bloqueados por WAF**: TRT9, MPF, MPT, FGTS e
       Prefeitura de Curitiba (CND) continuam bloqueados, confirmado com
       navegador real (não só `curl`, que mostrava HTTP 200 enganoso — os
