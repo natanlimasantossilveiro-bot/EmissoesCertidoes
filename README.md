@@ -170,12 +170,84 @@ tocar em nada que já existe**. Passo a passo:
       Linux/Docker do worker da Receita Federal — despriorizado pelo
       mesmo motivo. Ver `docs/CATALOGO_PORTAIS.md` e o aviso no topo de
       `services/worker-atendenet-pinhais/worker.py`
-- [x] **Reteste dos portais bloqueados por WAF**: TRT9, MPF, MPT, FGTS e
-      Prefeitura de Curitiba (CND) continuam bloqueados, confirmado com
-      navegador real (não só `curl`, que mostrava HTTP 200 enganoso — os
-      WAFs devolvem a própria tela de bloqueio com status 200). SEFAZ PR
-      mudou: a landing page passou a carregar sem bloqueio de borda —
-      levou à construção do worker abaixo
+- [x] **Reteste dos portais bloqueados por WAF (primeira rodada, datacenter)**:
+      TRT9, MPF, MPT, FGTS e Prefeitura de Curitiba (CND) continuavam
+      bloqueados, confirmado com navegador real (não só `curl`, que
+      mostrava HTTP 200 enganoso — os WAFs devolvem a própria tela de
+      bloqueio com status 200). SEFAZ PR mudou: a landing page passou a
+      carregar sem bloqueio de borda — levou à construção do worker abaixo
+- [x] **Reteste da rede real do escritório (2026-07-15, primeira rodada
+      via `curl`)**: dos 5 acima, **MPF e FGTS desbloquearam** (o
+      bloqueio original era reputação de IP do ambiente de datacenter,
+      não detecção de automação); TRT9, MPT e Prefeitura de Curitiba
+      (CND) pareciam continuar bloqueados mesmo saindo da rede real —
+      hipótese inicial de bloqueio estrutural. **Essa hipótese caiu**:
+      testando os três com navegador real (não só `curl`) e o mesmo
+      `--user-agent` corrigido usado no MPF/FGTS, os três **também
+      abriram limpos** — era o mesmo problema de User-Agent em todos os
+      5, não bloqueio estrutural de WAF pesado. Ver detalhes no item
+      abaixo e em `docs/CATALOGO_PORTAIS.md`
+- [x] **Workers do MPF e FGTS construídos e validados de ponta a ponta**
+      (`worker-mpf-certidao`, `worker-fgts-caixa`) — FGTS sem captcha
+      nenhum (JSF/RichFaces), resultado "REGULAR" com CNPJ real; MPF com
+      Cloudflare Turnstile resolvido de verdade, certidão "NADA CONSTA"
+      com selo digital conferido. Três bugs reais encontrados só rodando
+      de verdade (nenhum visível só por reconhecimento): (1) o bloqueio
+      dos dois na primeira tentativa real era por **User-Agent**
+      denunciando o Chromium headless (`HeadlessChrome/149.0.0.0`
+      capturado na própria página de bloqueio), não por IP — corrigido
+      sobrescrevendo o UA; (2) o hook de captcha por
+      `Object.defineProperty` (que já funciona pro hCaptcha/reCAPTCHA
+      Enterprise) não funcionava pro Cloudflare Turnstile — o bundle do
+      Cloudflare verifica `"turnstile" in window` pra decidir se já foi
+      carregado, e `defineProperty` engana essa checagem antes da hora;
+      corrigido com polling em vez de interceptar a atribuição
+      (`HOOK_SCRIPT_TURNSTILE_CALLBACK`, novo em `nodriver_base.py`); (3)
+      o link final do MPF tem atributo HTML `download`, mas clicar nele
+      via Chromium headless/CDP não produz arquivo nem evento de rede
+      capturável (diferente de um navegador real) — corrigido com um
+      `fetch()` de dentro da própria página em vez de clicar o link. Ver
+      avisos completos no topo de cada `worker.py` e
+      `docs/CATALOGO_PORTAIS.md`
+- [x] **Workers de Curitiba CND, TRT9 e MPT construídos no mesmo dia**
+      (`worker-curitiba-cnd-cpf`, `worker-trt9-certidao`,
+      `worker-mpt-certidao`), depois de confirmar que o bloqueio dos três
+      também era User-Agent, não WAF estrutural:
+      - **Curitiba CND** — ✅ validado de ponta a ponta várias vezes com
+        CPF real (certidões nº 13.308.881, 13.309.160, 13.309.310, entre
+        outras). Captcha **Altcha** (prova computacional) — resolve
+        sozinho no navegador, sem gastar 2captcha. Dois bugs reais
+        corrigidos: (1) `Element.send_keys()` sem pausa embaralhava os
+        dígitos do CPF na máscara do campo — corrigido com
+        `digitar_devagar()` (novo, em `AutomacaoNodriverBase`); (2) o
+        site mostra um diálogo "Já existe certidão Emitida" (não é
+        específico de CPF repetido — reapareceu até com um CPF nunca
+        usado antes, aparenta ser algo mais geral do site) que uma
+        checagem única não pegava a tempo — corrigido com polling
+      - **TRT9** — ✅ validado de ponta a ponta 4 vezes com CPF real,
+        código de verificação real a cada emissão. Captcha de imagem
+        simples via 2captcha. Bug real (cosmético, sem impacto no PDF
+        entregue): o Angular Material anuncia o texto de carregamento
+        numa região de acessibilidade (`aria-live`) que nunca some do
+        `innerText`, mesmo com o resultado real já carregado — às vezes
+        deixa o status em sucesso_provável com mensagem genérica em vez
+        de confirmado, mas o arquivo sai correto de qualquer forma
+      - **MPT** — 🟡 construído, dois bugs reais corrigidos (tipo certo
+        de captcha, reCAPTCHA Enterprise em vez de v2 clássico; espera
+        de navegação real após o `form.submit()`, 6s fixos não bastavam
+        num teste real), mas o **2captcha** ainda falha a maioria das
+        vezes em resolver esse captcha específico
+        (`ERROR_CAPTCHA_UNSOLVABLE`, confirmado 3x seguidas numa rodada
+        de teste) — já funcionou pelo menos uma vez, mas não é confiável
+        o bastante pra uso normal; mesma limitação do SEFAZ PR, não é
+        mais bug nosso
+      - **Curitiba Imóvel/Tributos** (`worker-curitiba-certidao-tributos-imovel`)
+        — 🟡 construído, mesmo tratamento do diálogo "Já existe
+        certidão" do CND aplicado aqui também, mas ainda bloqueado: o
+        campo "Documento do Proprietário" reaproveita o campo "Data de
+        nascimento" do painel, que tem máscara de data — não dá pra
+        digitar um CPF/CNPJ ali pela tela. Precisa de uma decisão de
+        produto (campo novo no painel específico pra esse grupo Imóvel)
 - [x] Suporte a **reCAPTCHA Enterprise** adicionado ao módulo de captcha
       (`resolver_recaptcha_enterprise`) e hook de interceptação de
       callback (`HOOK_SCRIPT_RECAPTCHA_ENTERPRISE_CALLBACK`, análogo ao

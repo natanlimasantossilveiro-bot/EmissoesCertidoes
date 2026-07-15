@@ -46,8 +46,55 @@ PORTAIS_DISPONIVEIS = {
     "curitiba_consulta_debitos_divida_ativa": "Consulta de Débitos - Dívida Ativa - Prefeitura de Curitiba",
     "sefaz_pr_certidao_debitos": "Certidão de Débitos Tributários e Dívida Ativa - SEFAZ PR",
     "atendenet_pinhais_cnd": "Certidão Negativa de Débitos (CND) - Prefeitura de Pinhais",
+    "fgts_caixa": "Situação de Regularidade do Empregador (FGTS) - Caixa Econômica Federal",
+    "mpf_certidao_negativa": "Certidão Negativa - Ministério Público Federal",
+    "curitiba_cnd_cpf": "Certidão de Tributos Municipais - Pessoa Física - Prefeitura de Curitiba",
+    "curitiba_certidao_tributos_imovel": "Certidão de Tributos Municipais - Imóvel - Prefeitura de Curitiba",
+    "trt9_certidao_trabalhista": "Certidão Trabalhista - PJe TRT9",
+    "mpt_certidao_negativa": "Certidão Negativa de Feitos - Ministério Público do Trabalho",
     # próximos portais entram aqui conforme forem sendo automatizados
+    # (lembre de adicionar também em GRUPO_DOCUMENTO_POR_PORTAL, abaixo)
 }
+
+# Pedido/planilha com múltiplos portais marcados de uma vez só faz sentido
+# se todos pedirem o MESMO tipo de documento — não dá pra ter um campo só
+# de "documento" servindo CPF/CNPJ pra uns e Indicação Fiscal pra outros
+# ao mesmo tempo. Isso é o que garante que a seleção múltipla (pedido
+# avulso ou planilha) nunca mistura as duas naturezas de consulta.
+GRUPO_CPF_CNPJ = "cpf_cnpj"
+GRUPO_IMOVEL = "imovel"
+GRUPO_DOCUMENTO_POR_PORTAL = {
+    "receita_federal": GRUPO_CPF_CNPJ,
+    "cpf_situacao_cadastral": GRUPO_CPF_CNPJ,
+    "cnpj_qsa": GRUPO_CPF_CNPJ,
+    "tst_cndt": GRUPO_CPF_CNPJ,
+    "trf4_certidao_civel_criminal": GRUPO_CPF_CNPJ,
+    "sefaz_pr_certidao_debitos": GRUPO_CPF_CNPJ,
+    "atendenet_pinhais_cnd": GRUPO_CPF_CNPJ,
+    "fgts_caixa": GRUPO_CPF_CNPJ,
+    "mpf_certidao_negativa": GRUPO_CPF_CNPJ,
+    "curitiba_cnd_cpf": GRUPO_CPF_CNPJ,
+    "trt9_certidao_trabalhista": GRUPO_CPF_CNPJ,
+    "mpt_certidao_negativa": GRUPO_CPF_CNPJ,
+    "curitiba_certidao_cadastro_imovel": GRUPO_IMOVEL,
+    "curitiba_consulta_debitos_divida_ativa": GRUPO_IMOVEL,
+    "curitiba_certidao_tributos_imovel": GRUPO_IMOVEL,
+}
+
+
+def _validar_portais_mesmo_grupo(portais: list[str]) -> None:
+    if not portais:
+        raise HTTPException(400, "Selecione ao menos um portal.")
+    invalidos = [p for p in portais if p not in PORTAIS_DISPONIVEIS]
+    if invalidos:
+        raise HTTPException(400, f"Portal(is) não habilitado(s): {', '.join(invalidos)}.")
+    grupos = {GRUPO_DOCUMENTO_POR_PORTAL.get(p, p) for p in portais}
+    if len(grupos) > 1:
+        raise HTTPException(
+            400,
+            "Não é possível selecionar portais de CPF/CNPJ junto com portais de "
+            "Indicação Fiscal (imóvel) no mesmo pedido — envie em pedidos separados.",
+        )
 
 # Cada worker grava certidão/evidência no PRÓPRIO volume Docker (isolado
 # dos outros containers) — sem isso, o caminho salvo em
@@ -66,6 +113,12 @@ CAMINHO_DADOS_POR_PORTAL = {
     "curitiba_consulta_debitos_divida_ativa": "/dados-workers/curitiba_consulta_debitos_divida_ativa",
     "sefaz_pr_certidao_debitos": "/dados-workers/sefaz_pr_certidao_debitos",
     "atendenet_pinhais_cnd": "/dados-workers/atendenet_pinhais_cnd",
+    "fgts_caixa": "/dados-workers/fgts_caixa",
+    "mpf_certidao_negativa": "/dados-workers/mpf_certidao_negativa",
+    "curitiba_cnd_cpf": "/dados-workers/curitiba_cnd_cpf",
+    "curitiba_certidao_tributos_imovel": "/dados-workers/curitiba_certidao_tributos_imovel",
+    "trt9_certidao_trabalhista": "/dados-workers/trt9_certidao_trabalhista",
+    "mpt_certidao_negativa": "/dados-workers/mpt_certidao_negativa",
 }
 
 
@@ -286,43 +339,46 @@ def consultar_status_dlq(_usuario: Usuario = Depends(obter_usuario_atual)):
 
 @app.post("/pedidos")
 def criar_pedido_unitario(
-    portal: str = Form(...),
+    portais: list[str] = Form(...),
     nome: str = Form(...),
     tipo: str = Form(None),
     documento: str = Form(...),
     data_nascimento: str = Form(""),
     usuario: Usuario = Depends(obter_usuario_atual),
 ):
-    if portal not in PORTAIS_DISPONIVEIS:
-        raise HTTPException(400, f"Portal '{portal}' não habilitado.")
+    _validar_portais_mesmo_grupo(portais)
 
+    ids_criados = []
     with get_session() as session:
-        pedido = PedidoCertidao(
-            portal=portal,
-            nome=nome,
-            tipo=tipo,
-            documento=documento,
-            data_nascimento=data_nascimento,
-            usuario_id=usuario.id,
-            status=StatusPedido.PENDENTE,
-        )
-        session.add(pedido)
-        session.commit()
-        session.refresh(pedido)
+        for portal in portais:
+            pedido = PedidoCertidao(
+                portal=portal,
+                nome=nome,
+                tipo=tipo,
+                documento=documento,
+                data_nascimento=data_nascimento,
+                usuario_id=usuario.id,
+                status=StatusPedido.PENDENTE,
+            )
+            session.add(pedido)
+            session.commit()
+            session.refresh(pedido)
+            ids_criados.append((portal, pedido.id))
 
-    publicar_pedido(portal, pedido.id)
+    # Publica todos na fila só depois de garantir que gravou tudo no banco
+    for portal, pedido_id in ids_criados:
+        publicar_pedido(portal, pedido_id)
 
-    return {"pedido_id": pedido.id, "status": "pendente"}
+    return {"pedido_ids": [pid for _, pid in ids_criados], "total": len(ids_criados)}
 
 
 @app.post("/pedidos/planilha")
 async def criar_pedidos_planilha(
-    portal: str = Form(...),
+    portais: list[str] = Form(...),
     planilha: UploadFile = File(...),
     usuario: Usuario = Depends(obter_usuario_atual),
 ):
-    if portal not in PORTAIS_DISPONIVEIS:
-        raise HTTPException(400, f"Portal '{portal}' não habilitado.")
+    _validar_portais_mesmo_grupo(portais)
 
     conteudo = await planilha.read()
     registros, erros = ler_planilha_certidoes(conteudo)
@@ -330,7 +386,7 @@ async def criar_pedidos_planilha(
     with get_session() as session:
         lote = LotePlanilha(
             nome_arquivo_original=planilha.filename,
-            total_linhas=str(len(registros)),
+            total_linhas=str(len(registros) * len(portais)),
             usuario_id=usuario.id,
         )
         session.add(lote)
@@ -342,32 +398,37 @@ async def criar_pedidos_planilha(
         # sessão fechar (fora do `with`) dispararia DetachedInstanceError.
         lote_id_valor = lote.id
 
+        # Cada linha da planilha vira um pedido POR portal marcado — uma
+        # planilha com 10 linhas e 3 portais gera 30 pedidos, todos no
+        # mesmo lote (pra aparecer junto no relatório/acompanhamento).
         ids_publicados = []
         for registro in registros:
-            pedido = PedidoCertidao(
-                portal=portal,
-                nome=registro["nome"],
-                tipo=registro.get("tipo"),
-                documento=registro["documento"],
-                data_nascimento=registro.get("data_nascimento", ""),
-                lote_id=lote_id_valor,
-                linha_planilha=str(registro["linha"]),
-                usuario_id=usuario.id,
-                status=StatusPedido.PENDENTE,
-            )
-            session.add(pedido)
-            session.commit()
-            session.refresh(pedido)
-            ids_publicados.append(pedido.id)
+            for portal in portais:
+                pedido = PedidoCertidao(
+                    portal=portal,
+                    nome=registro["nome"],
+                    tipo=registro.get("tipo"),
+                    documento=registro["documento"],
+                    data_nascimento=registro.get("data_nascimento", ""),
+                    lote_id=lote_id_valor,
+                    linha_planilha=str(registro["linha"]),
+                    usuario_id=usuario.id,
+                    status=StatusPedido.PENDENTE,
+                )
+                session.add(pedido)
+                session.commit()
+                session.refresh(pedido)
+                ids_publicados.append((portal, pedido.id))
 
     # Publica todos na fila só depois de garantir que gravou tudo no banco
-    for pedido_id in ids_publicados:
+    for portal, pedido_id in ids_publicados:
         publicar_pedido(portal, pedido_id)
 
     return {
         "lote_id": lote_id_valor,
         "total_validos": len(registros),
         "total_erros_validacao": len(erros),
+        "total_pedidos_criados": len(ids_publicados),
         "erros": erros,
     }
 

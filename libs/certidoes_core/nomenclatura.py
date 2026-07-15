@@ -29,6 +29,8 @@ NOME_PASTA_POR_PORTAL = {
     "curitiba_consulta_debitos_divida_ativa": "Consulta de Débitos",
     "sefaz_pr_certidao_debitos": "Tributo Estadual",
     "atendenet_pinhais_cnd": "Tributo Municipal Pinhais",
+    "mpf_certidao_negativa": "Certidão MPF",
+    "fgts_caixa": "Certidão FGTS",
 }
 
 # O TRF4 tem um rótulo diferente por tipo de certidão (mesmo portal) —

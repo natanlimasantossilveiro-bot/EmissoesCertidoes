@@ -60,6 +60,12 @@ services:
       - worker_curitiba_debitos_data:/dados-workers/curitiba_consulta_debitos_divida_ativa:ro
       - worker_sefaz_pr_data:/dados-workers/sefaz_pr_certidao_debitos:ro
       - worker_atendenet_pinhais_data:/dados-workers/atendenet_pinhais_cnd:ro
+      - worker_fgts_caixa_data:/dados-workers/fgts_caixa:ro
+      - worker_mpf_certidao_data:/dados-workers/mpf_certidao_negativa:ro
+      - worker_curitiba_cnd_cpf_data:/dados-workers/curitiba_cnd_cpf:ro
+      - worker_curitiba_tributos_imovel_data:/dados-workers/curitiba_certidao_tributos_imovel:ro
+      - worker_trt9_certidao_data:/dados-workers/trt9_certidao_trabalhista:ro
+      - worker_mpt_certidao_data:/dados-workers/mpt_certidao_negativa:ro
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -264,6 +270,135 @@ services:
     deploy:
       replicas: 1
 
+  worker-fgts-caixa:
+    build:
+      context: .
+      dockerfile: services/worker-fgts-caixa/Dockerfile
+    restart: unless-stopped
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
+      BROWSER_HEADLESS: "true"
+      BROWSER_DOWNLOAD_DIR: /data/downloads
+      STORAGE_LOCAL_PATH: /data/evidencias
+    volumes:
+      - worker_fgts_caixa_data:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+
+  worker-mpf-certidao:
+    build:
+      context: .
+      dockerfile: services/worker-mpf-certidao/Dockerfile
+    restart: unless-stopped
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
+      BROWSER_HEADLESS: "true"
+      BROWSER_DOWNLOAD_DIR: /data/downloads
+      STORAGE_LOCAL_PATH: /data/evidencias
+      TWOCAPTCHA_API_KEY: ${TWOCAPTCHA_API_KEY}
+    volumes:
+      - worker_mpf_certidao_data:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+
+  worker-curitiba-cnd-cpf:
+    build:
+      context: .
+      dockerfile: services/worker-curitiba-cnd-cpf/Dockerfile
+    restart: unless-stopped
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
+      BROWSER_HEADLESS: "true"
+      BROWSER_DOWNLOAD_DIR: /data/downloads
+      STORAGE_LOCAL_PATH: /data/evidencias
+    volumes:
+      - worker_curitiba_cnd_cpf_data:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+
+  worker-curitiba-certidao-tributos-imovel:
+    build:
+      context: .
+      dockerfile: services/worker-curitiba-certidao-tributos-imovel/Dockerfile
+    restart: unless-stopped
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
+      BROWSER_HEADLESS: "true"
+      BROWSER_DOWNLOAD_DIR: /data/downloads
+      STORAGE_LOCAL_PATH: /data/evidencias
+    volumes:
+      - worker_curitiba_tributos_imovel_data:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+
+  worker-trt9-certidao:
+    build:
+      context: .
+      dockerfile: services/worker-trt9-certidao/Dockerfile
+    restart: unless-stopped
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
+      BROWSER_HEADLESS: "true"
+      BROWSER_DOWNLOAD_DIR: /data/downloads
+      STORAGE_LOCAL_PATH: /data/evidencias
+      TWOCAPTCHA_API_KEY: ${TWOCAPTCHA_API_KEY}
+    volumes:
+      - worker_trt9_certidao_data:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+
+  worker-mpt-certidao:
+    build:
+      context: .
+      dockerfile: services/worker-mpt-certidao/Dockerfile
+    restart: unless-stopped
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
+      BROWSER_HEADLESS: "true"
+      BROWSER_DOWNLOAD_DIR: /data/downloads
+      STORAGE_LOCAL_PATH: /data/evidencias
+      TWOCAPTCHA_API_KEY: ${TWOCAPTCHA_API_KEY}
+    volumes:
+      - worker_mpt_certidao_data:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+
 volumes:
   mysql_data:
   rabbitmq_data:
@@ -276,3 +411,9 @@ volumes:
   worker_curitiba_debitos_data:
   worker_sefaz_pr_data:
   worker_atendenet_pinhais_data:
+  worker_fgts_caixa_data:
+  worker_mpf_certidao_data:
+  worker_curitiba_cnd_cpf_data:
+  worker_curitiba_tributos_imovel_data:
+  worker_trt9_certidao_data:
+  worker_mpt_certidao_data:

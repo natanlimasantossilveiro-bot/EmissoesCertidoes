@@ -32,3 +32,10 @@ class ResolvedorCaptcha(ABC):
     async def resolver_captcha_imagem(self, imagem_base64: str) -> str:
         """Pra captchas simples de texto/imagem (ex: alguns Atende.Net)."""
         raise NotImplementedError
+
+    @abstractmethod
+    async def resolver_turnstile(self, sitekey: str, url_pagina: str) -> str:
+        """Cloudflare Turnstile (ex: MPF) — diferente de hCaptcha/reCAPTCHA,
+        mas resolvido da mesma forma: token pronto pra injetar via callback
+        que a própria página registrou em turnstile.render({callback})."""
+        raise NotImplementedError

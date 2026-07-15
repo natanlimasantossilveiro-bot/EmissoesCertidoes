@@ -55,15 +55,24 @@ Ambos os testes acima foram revertidos (ver histórico do
 worker.py/Dockerfile/docker-compose.yml) — nenhum resolveu, então não
 valia manter a complexidade extra sem benefício.
 
-O que sobra: o ambiente Linux/Docker em si (não o navegador específico)
-parece ser o que essa proteção da Receita detecta — algo mais profundo
-que flag de navegador não resolve. Único caminho ainda não testado:
-rodar esse worker específico fora do Docker (o projeto irmão citado
-acima roda assim, nativo no Windows, e funciona toda vez). Isso é uma
-exceção arquitetural real — vale a pena confirmar primeiro se o mesmo
-problema também acontece rodando Linux nativo (fora do Docker, ex: via
-WSL2 direto) antes de decidir se a exceção precisa ser "roda fora do
-Docker" ou especificamente "roda fora do Linux".
+**Teste decisivo, feito depois**: rodei o mesmo fluxo em Linux puro, sem
+Docker nenhum (WSL2 Ubuntu 24.04, Chromium via snap, `--no-sandbox` só
+por rodar como root, sem nenhuma camada de container) — **mesmo erro
+023**. Ou seja, não é o Docker — é o **Linux em si** (ou algo
+correlacionado a ele: fingerprint do Chromium/Linux, comportamento de
+rede do kernel, etc.) que esse serviço específico da Receita detecta.
+O projeto irmão só funciona porque roda nativo no **Windows**, não por
+estar "fora do Docker".
+
+Implicação prática: o VPS (que vai ser Linux) **provavelmente vai
+esbarrar no mesmo bloqueio**, já que o problema não é containerização
+nem rede/IP — é o sistema operacional. A única forma comprovada de
+contornar continua sendo rodar esse worker específico num Windows de
+verdade, sempre ligado — o que segue sendo a mesma limitação prática já
+identificada (sem máquina Windows disponível, esse portal fica com
+emissão manual por enquanto). Os outros bloqueios deste projeto (WAFs
+de rede, captcha) não têm essa mesma característica e continuam
+valendo a pena testar do VPS.
 """
 import asyncio
 import json

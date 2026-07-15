@@ -39,3 +39,9 @@ class ResolvedorTwoCaptcha(ResolvedorCaptcha):
     async def resolver_captcha_imagem(self, imagem_base64: str) -> str:
         resultado = await asyncio.to_thread(self._cliente.normal, imagem_base64)
         return resultado["code"]
+
+    async def resolver_turnstile(self, sitekey: str, url_pagina: str) -> str:
+        resultado = await asyncio.to_thread(
+            self._cliente.turnstile, sitekey=sitekey, url=url_pagina
+        )
+        return resultado["code"]

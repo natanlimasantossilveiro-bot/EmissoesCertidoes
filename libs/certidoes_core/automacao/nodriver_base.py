@@ -87,12 +87,59 @@ HOOK_SCRIPT_RECAPTCHA_ENTERPRISE_CALLBACK = """
 """
 
 
+# Mesma ideia dos dois hooks acima, agora pro Cloudflare Turnstile
+# (confirmado no MPF): a diretiva Angular do site (`turnstile-captcha`)
+# chama `turnstile.render(element, {sitekey, callback})` diretamente — o
+# app só sabe que o captcha foi resolvido através desse callback, não
+# observando nenhum campo de formulário (o Turnstile nem usa uma textarea
+# visível como o hCaptcha/reCAPTCHA clássico).
+#
+# ⚠️ Diferente dos dois hooks acima: interceptar a ATRIBUIÇÃO de
+# `window.turnstile` via `Object.defineProperty` (a mesma técnica usada
+# pro hCaptcha/reCAPTCHA Enterprise) NÃO funciona aqui — confirmado
+# rodando contra o MPF de verdade (captcha resolvido e injetado, mas o
+# Angular nunca reconheceu, com o erro "Por favor, marque o captcha
+# antes de continuar."). Causa raiz encontrada lendo o bundle oficial do
+# Cloudflare (`challenges.cloudflare.com/turnstile/v0/api.js`): o próprio
+# script verifica `"turnstile" in window` pra decidir se já foi carregado
+# antes (evitar dupla inicialização) — e `Object.defineProperty` já faz
+# essa checagem virar `true` mesmo antes de qualquer valor real existir
+# (só de existir o getter/setter, a propriedade "existe" pro operador
+# `in`), enganando o Cloudflare pra achar que o Turnstile já tinha sido
+# carregado e pulando o caminho normal de inicialização. Por isso aqui
+# usamos uma abordagem diferente: não tocamos em `window.turnstile`
+# antes do Cloudflare mesmo atribuir — só fazemos polling até o objeto
+# aparecer sozinho, e SÓ ENTÃO sobrescrevemos o método `.render` nele já
+# existente (mutação depois do fato, não interceptação da atribuição).
+HOOK_SCRIPT_TURNSTILE_CALLBACK = """
+(function() {
+    let jaAplicado = false;
+    function tentarAplicar() {
+        if (jaAplicado) return;
+        if (window.turnstile && typeof window.turnstile.render === "function") {
+            jaAplicado = true;
+            const originalRender = window.turnstile.render.bind(window.turnstile);
+            window.turnstile.render = function(container, params) {
+                window.__turnstileCallback = params.callback;
+                return originalRender(container, params);
+            };
+        }
+    }
+    const intervalo = setInterval(function() {
+        tentarAplicar();
+        if (jaAplicado) clearInterval(intervalo);
+    }, 20);
+})();
+"""
+
+
 class AutomacaoNodriverBase(AutomacaoPortal):
     url_inicial: str
     browser_args_extra: list = []
     espera_inicial_segundos: int = 3  # portais mais pesados (ex: SPA Angular) podem sobrescrever
     usar_hook_hcaptcha_callback: bool = False  # ver HOOK_SCRIPT_HCAPTCHA_CALLBACK acima
     usar_hook_recaptcha_enterprise_callback: bool = False  # ver HOOK_SCRIPT_RECAPTCHA_ENTERPRISE_CALLBACK acima
+    usar_hook_turnstile_callback: bool = False  # ver HOOK_SCRIPT_TURNSTILE_CALLBACK acima
     # `--no-sandbox` é uma flag que só automação/servidor usa — nenhum
     # usuário comum roda o Chrome assim, e é um sinal conhecido de
     # detecção antifraude (confirmado contra a Receita Federal: o mesmo
@@ -122,7 +169,8 @@ class AutomacaoNodriverBase(AutomacaoPortal):
         )
         try:
             page = await browser.get("about:blank")
-            if self.usar_hook_hcaptcha_callback or self.usar_hook_recaptcha_enterprise_callback:
+            if (self.usar_hook_hcaptcha_callback or self.usar_hook_recaptcha_enterprise_callback
+                    or self.usar_hook_turnstile_callback):
                 # Page.enable é obrigatório aqui — sem isso,
                 # addScriptToEvaluateOnNewDocument "sucede" (retorna um id)
                 # mas não tem efeito nenhum na prática (confirmado testando).
@@ -134,6 +182,10 @@ class AutomacaoNodriverBase(AutomacaoPortal):
                 if self.usar_hook_recaptcha_enterprise_callback:
                     await page.send(nd.cdp.page.add_script_to_evaluate_on_new_document(
                         source=HOOK_SCRIPT_RECAPTCHA_ENTERPRISE_CALLBACK
+                    ))
+                if self.usar_hook_turnstile_callback:
+                    await page.send(nd.cdp.page.add_script_to_evaluate_on_new_document(
+                        source=HOOK_SCRIPT_TURNSTILE_CALLBACK
                     ))
 
             await page.get(self.url_inicial)
@@ -157,6 +209,20 @@ class AutomacaoNodriverBase(AutomacaoPortal):
 
     def _listar_pdfs_downloads(self) -> set:
         return set(config.BROWSER_DOWNLOAD_DIR.glob("*.pdf"))
+
+    @staticmethod
+    async def digitar_devagar(elemento, texto: str, atraso_segundos: float = 0.12):
+        """Alternativa ao `Element.send_keys()` do próprio nodriver pra
+        campos com máscara de formatação em JS (ex: CPF ganhando pontos e
+        traço enquanto digita). Confirmado num teste real (Curitiba CND):
+        `send_keys()` manda os caracteres via CDP um atrás do outro sem
+        nenhuma pausa, rápido demais pro script de máscara reformatar o
+        campo entre uma tecla e outra — o valor final saía com os dígitos
+        fora de ordem. Aqui simplesmente espaça cada tecla."""
+        await elemento.apply("(elem) => elem.focus()")
+        for caractere in texto:
+            await elemento.tab.send(nd.cdp.input_.dispatch_key_event("char", text=caractere))
+            await asyncio.sleep(atraso_segundos)
 
     async def aguardar_e_mover_pdf(self, pedido: PedidoCertidao, pdfs_antes: set, tentativas: int = 30) -> str:
         """Espera o navegador terminar de baixar um PDF novo e move pro

@@ -125,6 +125,23 @@
   .portal-status.parcial { background: var(--warn-bg); color: var(--warn); }
   .portal-status.teste { background: var(--neutral-bg); color: var(--neutral); }
 
+  .portais-lista {
+    border: 1px solid var(--border); border-radius: 7px; padding: 8px 10px;
+    max-height: 260px; overflow-y: auto; margin-bottom: 4px; background: #fff;
+  }
+  .portais-lista .grupo-titulo {
+    font-size: .7rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .03em; color: var(--text-muted); margin: 10px 0 4px;
+  }
+  .portais-lista .grupo-titulo:first-child { margin-top: 0; }
+  .portal-item {
+    display: flex; align-items: center; gap: 8px; padding: 5px 2px;
+    font-size: .85rem; cursor: pointer;
+  }
+  .portal-item input[type="checkbox"] { width: auto; }
+  .portal-item .badge-mini { margin-left: auto; font-size: .8rem; }
+  .portal-item.disabled { opacity: .35; cursor: not-allowed; }
+
   button {
     cursor: pointer; border: none; border-radius: 7px; padding: 10px 18px;
     font-size: .88rem; font-weight: 600; background: var(--primary); color: #fff;
@@ -136,7 +153,7 @@
   button:disabled { opacity: .5; cursor: not-allowed; }
   button.small { margin: 2px 0; padding: 4px 9px; font-size: .74rem; }
 
-  .msg { font-size: .82rem; margin-top: 10px; padding: 9px 11px; border-radius: 7px; display: none; }
+  .msg { font-size: .82rem; margin-top: 10px; padding: 9px 11px; border-radius: 7px; display: none; white-space: pre-line; }
   .msg.show { display: block; }
   .msg.ok { background: var(--ok-bg); color: var(--ok); }
   .msg.err { background: var(--err-bg); color: var(--err); }
@@ -293,9 +310,8 @@
       <h2>Novo pedido</h2>
       <p class="card-desc">Emite uma certidão avulsa em um portal específico.</p>
 
-      <label for="f-portal">Portal</label>
-      <select id="f-portal"></select>
-      <div class="portal-status" id="f-portal-status"></div>
+      <label>Portais (um ou mais do mesmo grupo — CPF/CNPJ ou Imóvel)</label>
+      <div class="portais-lista" id="f-portais-lista"></div>
 
       <label for="f-nome">Nome / Razão social</label>
       <input id="f-nome" type="text" placeholder="Fulano de Tal">
@@ -318,10 +334,10 @@
 
     <div class="card">
       <h2>Upload de planilha</h2>
-      <p class="card-desc">Emite em lote — uma linha por pedido, mesmo portal para todos.</p>
+      <p class="card-desc">Emite em lote — cada linha vira um pedido por portal marcado (mesma linha em 3 portais = 3 pedidos).</p>
 
-      <label for="p-portal">Portal</label>
-      <select id="p-portal"></select>
+      <label>Portais (um ou mais do mesmo grupo — CPF/CNPJ ou Imóvel)</label>
+      <div class="portais-lista" id="p-portais-lista"></div>
 
       <label for="p-arquivo">Arquivo (.xlsx — colunas: nome, tipo, documento, data_nascimento)</label>
       <input id="p-arquivo" type="file" accept=".xlsx">
@@ -591,102 +607,89 @@ function renderizarLotes() {
 function mostrarMsg(elemento, texto, tipo) {
   elemento.textContent = texto;
   elemento.className = "msg show " + tipo;
-  setTimeout(() => elemento.classList.remove("show"), 6000);
+  // Lista de erros por linha pode ser longa — dá mais tempo antes de
+  // sumir sozinho, senão some antes de dar tempo de ler tudo.
+  const duracao = texto.length > 100 ? 15000 : 6000;
+  setTimeout(() => elemento.classList.remove("show"), duracao);
 }
 
-// Cada portal define seus próprios valores válidos pro campo "Tipo" — a
-// maioria é PF/PJ, mas o TRF4/JFPR pede o tipo de certidão (cível/criminal/
-// eleitoral) nesse mesmo campo. Sem isso, o front só conseguiria mandar
-// "pf"/"pj", que o worker do TRF4 não reconhece (cai no default "civel").
-const TIPO_OPCOES_POR_PORTAL = {
-  trf4_certidao_civel_criminal: [
-    { value: "civel", label: "Cível" },
-    { value: "criminal", label: "Criminal" },
-    { value: "eleitoral", label: "Eleitoral" },
-  ],
+// Grupo de documento por portal — espelha GRUPO_DOCUMENTO_POR_PORTAL do
+// Gateway (services/gateway/app/main.py). Não dá pra marcar portais de
+// grupos diferentes ao mesmo tempo: um pede CPF/CNPJ, outro pede
+// Indicação Fiscal de imóvel — nenhum conjunto único de campos (nem
+// uma única coluna de planilha) serve aos dois ao mesmo tempo.
+// ⚠️ Simplificação assumida aqui: o TRF4 tem um "Tipo" próprio
+// (Cível/Criminal/Eleitoral) fora dessa seleção múltipla — ao marcar
+// TRF4 junto com outros portais do grupo, sempre vai como PF/PJ
+// genérico, e o worker do TRF4 cai no próprio default dele (Cível) pra
+// qualquer valor que não reconheça. Pra escolher Criminal/Eleitoral de
+// propósito, emita o TRF4 sozinho.
+const GRUPO_DOCUMENTO_POR_PORTAL = {
+  receita_federal: "cpf_cnpj",
+  cpf_situacao_cadastral: "cpf_cnpj",
+  cnpj_qsa: "cpf_cnpj",
+  tst_cndt: "cpf_cnpj",
+  trf4_certidao_civel_criminal: "cpf_cnpj",
+  sefaz_pr_certidao_debitos: "cpf_cnpj",
+  atendenet_pinhais_cnd: "cpf_cnpj",
+  fgts_caixa: "cpf_cnpj",
+  mpf_certidao_negativa: "cpf_cnpj",
+  curitiba_cnd_cpf: "cpf_cnpj",
+  trt9_certidao_trabalhista: "cpf_cnpj",
+  mpt_certidao_negativa: "cpf_cnpj",
+  curitiba_certidao_cadastro_imovel: "imovel",
+  curitiba_consulta_debitos_divida_ativa: "imovel",
+  curitiba_certidao_tributos_imovel: "imovel",
 };
-const TIPO_OPCOES_PADRAO = [
-  { value: "pf", label: "PF" },
-  { value: "pj", label: "PJ" },
-];
+const TITULO_GRUPO = { cpf_cnpj: "CPF / CNPJ", imovel: "Indicação Fiscal (imóvel)" };
 
-// Config por portal, com base exata no que cada worker usa de verdade
-// (conferido no código, não só na planilha de levantamento) — evita
-// mostrar campo que o portal não pede (ex: Data de nascimento numa
-// consulta que só usa CNPJ) ou esconder um que ele exige (ex: TRF4,
-// que sempre pede data mesmo pra CNPJ).
-// mostrarData: "sempre" | "nunca" | "auto" (auto = só aparece se Tipo === "pf")
-const CAMPOS_DOCUMENTO_POR_PORTAL = {
-  cpf_situacao_cadastral: {
-    // Serviço só existe pra pessoa física — sem opção de CNPJ no site.
-    labelDocumento: "CPF (só números)",
-    placeholderDocumento: "00000000000",
-    mostrarTipo: false,
-    mostrarData: "sempre",
-  },
-  cnpj_qsa: {
-    // Serviço só existe pra pessoa jurídica — sem opção de CPF no site.
-    labelDocumento: "CNPJ (só números)",
-    placeholderDocumento: "00000000000000",
-    mostrarTipo: false,
-    mostrarData: "nunca",
-  },
-  tst_cndt: {
-    // Aceita CPF ou CNPJ no mesmo campo, mas o worker nunca usa data de
-    // nascimento (confirmado no código — só usa `pedido.documento`).
-    labelDocumento: "CPF ou CNPJ (só números)",
-    placeholderDocumento: "00000000000",
-    mostrarTipo: false,
-    mostrarData: "nunca",
-  },
-  sefaz_pr_certidao_debitos: {
-    labelDocumento: "CPF ou CNPJ (só números)",
-    placeholderDocumento: "00000000000",
-    mostrarTipo: false,
-    mostrarData: "nunca",
-  },
-  trf4_certidao_civel_criminal: {
-    // "Tipo" aqui já é Cível/Criminal/Eleitoral (ver TIPO_OPCOES_POR_PORTAL)
-    // — mantém visível, só a regra de data muda (sempre pede, mesmo PJ).
-    labelDocumento: "CPF/CNPJ (só números)",
+// Dentro do grupo Imóvel, esse portal específico pede um SEGUNDO
+// documento (CPF/CNPJ do proprietário), além da Indicação Fiscal — os
+// outros dois portais de Imóvel não precisam disso. Reaproveita o mesmo
+// campo "Data de nascimento" (que o grupo Imóvel normalmente nem
+// mostra), só trocando o rótulo/máscara quando esse portal está
+// marcado — evita adicionar um campo novo no HTML só pra esse caso
+// isolado.
+const PORTAIS_QUE_PRECISAM_DOCUMENTO_PROPRIETARIO = new Set(["curitiba_certidao_tributos_imovel"]);
+
+const CAMPOS_POR_GRUPO = {
+  cpf_cnpj: {
+    labelDocumento: "Documento (CPF/CNPJ, só números)",
     placeholderDocumento: "00000000000",
     mostrarTipo: true,
-    mostrarData: "sempre",
+    mostrarData: true,
   },
-  curitiba_certidao_cadastro_imovel: {
+  imovel: {
     labelDocumento: "Indicação Fiscal do imóvel (só números)",
     placeholderDocumento: "000000000000",
     mostrarTipo: false,
-    mostrarData: "nunca",
+    mostrarData: false,
   },
-  curitiba_consulta_debitos_divida_ativa: {
-    labelDocumento: "Indicação Fiscal do imóvel (só números)",
-    placeholderDocumento: "000000000000",
-    mostrarTipo: false,
-    mostrarData: "nunca",
-  },
-  atendenet_pinhais_cnd: {
-    labelDocumento: "CPF ou CNPJ (só números)",
-    placeholderDocumento: "00000000000",
-    mostrarTipo: false,
-    mostrarData: "nunca",
-  },
-};
-// receita_federal cai aqui — é o único portal onde o campo muda de
-// verdade com o Tipo escolhido (PF pede CPF+data, PJ só CNPJ).
-const CAMPOS_DOCUMENTO_PADRAO = {
-  labelDocumento: "Documento (CPF/CNPJ, só números)",
-  placeholderDocumento: "00000000000",
-  mostrarTipo: true,
-  mostrarData: "auto",
 };
 
-function atualizarCampoDocumento() {
-  const config = CAMPOS_DOCUMENTO_POR_PORTAL[el("f-portal").value] || CAMPOS_DOCUMENTO_PADRAO;
+function atualizarCamposPedido(grupo, portaisSelecionados) {
+  const config = CAMPOS_POR_GRUPO[grupo] || CAMPOS_POR_GRUPO.cpf_cnpj;
   el("f-documento-label").textContent = config.labelDocumento;
   el("f-documento").placeholder = config.placeholderDocumento;
   el("f-tipo-label").style.display = config.mostrarTipo ? "" : "none";
   el("f-tipo").style.display = config.mostrarTipo ? "" : "none";
+
+  const precisaDocProprietario = (portaisSelecionados || []).some(
+    (p) => PORTAIS_QUE_PRECISAM_DOCUMENTO_PROPRIETARIO.has(p)
+  );
+  const mostrarCampoData = config.mostrarData || precisaDocProprietario;
+  el("f-data").classList.toggle("show", mostrarCampoData);
+  el("f-data-label").classList.toggle("show", mostrarCampoData);
+  campoDataEhDocumentoProprietario = precisaDocProprietario;
+  if (precisaDocProprietario) {
+    el("f-data-label").textContent = "Documento do proprietário (CPF/CNPJ, só números)";
+    el("f-data").placeholder = "00000000000";
+    el("f-data").maxLength = 14;
+  } else {
+    el("f-data-label").textContent = "Data de nascimento (dd/mm/aaaa)";
+    el("f-data").placeholder = "01/01/1990";
+    el("f-data").maxLength = 10;
+  }
 }
 
 // Status real de cada worker, mantido manualmente aqui a partir do que já
@@ -703,40 +706,63 @@ const STATUS_PORTAL = {
   trf4_certidao_civel_criminal: { nivel: "parcial", texto: "🟡 Submissão validada — download final bloqueado por bug do site do TRF4" },
   sefaz_pr_certidao_debitos: { nivel: "parcial", texto: "🟡 2captcha não consegue resolver o captcha desse portal ainda" },
   atendenet_pinhais_cnd: { nivel: "parcial", texto: "🟡 Sem captcha, caminho de \"não encontrado\" validado — caminho de sucesso ainda não confirmado com CPF/CNPJ real de Pinhais" },
+  fgts_caixa: { nivel: "ok", texto: "✅ Validado de ponta a ponta (sem captcha) — CRF real capturado" },
+  mpf_certidao_negativa: { nivel: "ok", texto: "✅ Validado de ponta a ponta (Cloudflare Turnstile resolvido)" },
+  curitiba_cnd_cpf: { nivel: "ok", texto: "✅ Validado de ponta a ponta (captcha Altcha, sem custo)" },
+  trt9_certidao_trabalhista: { nivel: "ok", texto: "✅ Validado de ponta a ponta (captcha de imagem via 2captcha)" },
+  mpt_certidao_negativa: { nivel: "parcial", texto: "🟡 2captcha raramente consegue resolver o captcha desse portal (reCAPTCHA Enterprise)" },
+  curitiba_certidao_tributos_imovel: { nivel: "parcial", texto: "🟡 Precisa do campo \"Documento do proprietário\" preenchido — ainda não validado de ponta a ponta" },
 };
 
-function atualizarOpcoesTipo() {
-  const opcoes = TIPO_OPCOES_POR_PORTAL[el("f-portal").value] || TIPO_OPCOES_PADRAO;
-  const sel = el("f-tipo");
-  sel.innerHTML = "";
-  for (const { value, label } of opcoes) {
-    const opt = document.createElement("option");
-    opt.value = value;
-    opt.textContent = label;
-    sel.appendChild(opt);
+function renderizarListaPortais(containerId, portais) {
+  const grupos = { cpf_cnpj: [], imovel: [] };
+  for (const [chave, label] of Object.entries(portais)) {
+    const grupo = GRUPO_DOCUMENTO_POR_PORTAL[chave] || "cpf_cnpj";
+    grupos[grupo].push({ chave, label });
   }
-  atualizarVisibilidadeData();
-  atualizarStatusPortal();
-  atualizarCampoDocumento();
+  const container = el(containerId);
+  container.innerHTML = "";
+  for (const grupo of ["cpf_cnpj", "imovel"]) {
+    if (grupos[grupo].length === 0) continue;
+    const titulo = document.createElement("div");
+    titulo.className = "grupo-titulo";
+    titulo.textContent = TITULO_GRUPO[grupo];
+    container.appendChild(titulo);
+    for (const { chave, label } of grupos[grupo]) {
+      const info = STATUS_PORTAL[chave] || { nivel: "teste", texto: "🧪 Status ainda não catalogado" };
+      const emoji = info.nivel === "ok" ? "✅" : info.nivel === "parcial" ? "🟡" : "🧪";
+      const item = document.createElement("label");
+      item.className = "portal-item";
+      item.title = info.texto;
+      item.innerHTML = `
+        <input type="checkbox" value="${chave}" data-grupo="${grupo}">
+        <span>${label}</span>
+        <span class="badge-mini">${emoji}</span>
+      `;
+      container.appendChild(item);
+    }
+  }
 }
 
-function atualizarStatusPortal() {
-  const info = STATUS_PORTAL[el("f-portal").value] || { nivel: "teste", texto: "🧪 Portal em teste — status ainda não catalogado" };
-  const caixa = el("f-portal-status");
-  caixa.textContent = info.texto;
-  caixa.className = "portal-status show " + info.nivel;
+// Marcar um portal de um grupo desabilita (visualmente e de fato) os
+// portais do OUTRO grupo, até desmarcar tudo de novo — é o que garante
+// que a seleção múltipla nunca mistura CPF/CNPJ com Indicação Fiscal.
+function configurarSelecaoExclusivaPorGrupo(containerId, aoMudar) {
+  const container = el(containerId);
+  container.addEventListener("change", () => {
+    const marcados = Array.from(container.querySelectorAll('input[type="checkbox"]:checked'));
+    const grupoAtivo = marcados.length > 0 ? marcados[0].dataset.grupo : null;
+    container.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+      const deOutroGrupo = grupoAtivo !== null && cb.dataset.grupo !== grupoAtivo;
+      cb.disabled = deOutroGrupo;
+      cb.closest(".portal-item").classList.toggle("disabled", deOutroGrupo);
+    });
+    if (aoMudar) aoMudar(marcados.map((cb) => cb.value), grupoAtivo);
+  });
 }
 
-function atualizarVisibilidadeData() {
-  const config = CAMPOS_DOCUMENTO_POR_PORTAL[el("f-portal").value] || CAMPOS_DOCUMENTO_PADRAO;
-  const mostrar =
-    config.mostrarData === "sempre" ? true :
-    config.mostrarData === "nunca" ? false :
-    // "auto" — só pede data quando faz sentido pra pessoa física (hoje,
-    // só a Receita Federal varia de verdade com o Tipo escolhido).
-    el("f-tipo").value === "pf";
-  el("f-data").classList.toggle("show", mostrar);
-  el("f-data-label").classList.toggle("show", mostrar);
+function portaisMarcados(containerId) {
+  return Array.from(el(containerId).querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
 }
 
 let portaisCache = {};
@@ -747,40 +773,34 @@ async function carregarPortais() {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const portais = await resp.json();
     portaisCache = portais;
-    const selects = [el("f-portal"), el("p-portal")];
-    selects.forEach((sel) => {
-      sel.innerHTML = "";
-      for (const [chave, label] of Object.entries(portais)) {
-        const opt = document.createElement("option");
-        opt.value = chave;
-        opt.textContent = label;
-        sel.appendChild(opt);
-      }
-    });
-    atualizarOpcoesTipo();
+    renderizarListaPortais("f-portais-lista", portais);
+    renderizarListaPortais("p-portais-lista", portais);
+    atualizarCamposPedido("cpf_cnpj");
   } catch (erro) {
     console.error("Falha ao carregar portais:", erro);
   }
 }
 
-el("f-portal").addEventListener("change", atualizarOpcoesTipo);
-el("f-tipo").addEventListener("change", atualizarVisibilidadeData);
+configurarSelecaoExclusivaPorGrupo("f-portais-lista", (selecionados, grupo) => {
+  atualizarCamposPedido(grupo || "cpf_cnpj", selecionados);
+});
+configurarSelecaoExclusivaPorGrupo("p-portais-lista", null);
 
 el("btnCriarPedido").addEventListener("click", async () => {
-  const portal = el("f-portal").value;
+  const portais = portaisMarcados("f-portais-lista");
   const nome = el("f-nome").value.trim();
   const tipo = el("f-tipo").value;
   const documento = el("f-documento").value.trim();
   const dataNascimento = el("f-data").value.trim();
   const msgEl = el("msgPedido");
 
-  if (!portal || !nome || !documento) {
-    mostrarMsg(msgEl, "Preencha portal, nome e documento.", "err");
+  if (portais.length === 0 || !nome || !documento) {
+    mostrarMsg(msgEl, "Selecione ao menos um portal e preencha nome e documento.", "err");
     return;
   }
 
   const form = new FormData();
-  form.append("portal", portal);
+  portais.forEach((p) => form.append("portais", p));
   form.append("nome", nome);
   form.append("tipo", tipo);
   form.append("documento", documento);
@@ -790,8 +810,8 @@ el("btnCriarPedido").addEventListener("click", async () => {
     const resp = await fetchAutenticado(`${gatewayUrl()}/pedidos`, { method: "POST", body: form });
     const dados = await resp.json();
     if (!resp.ok) throw new Error(dados.detail || "Erro desconhecido");
-    adicionarPedidoRastreado(dados.pedido_id);
-    mostrarMsg(msgEl, `Pedido criado: ${dados.pedido_id.slice(0, 8)}...`, "ok");
+    dados.pedido_ids.forEach((id) => adicionarPedidoRastreado(id));
+    mostrarMsg(msgEl, `${dados.total} pedido(s) criado(s) (${portais.length} portal(is)).`, "ok");
     el("f-documento").value = "";
     atualizarTabela();
   } catch (erro) {
@@ -800,27 +820,37 @@ el("btnCriarPedido").addEventListener("click", async () => {
 });
 
 el("btnEnviarPlanilha").addEventListener("click", async () => {
-  const portal = el("p-portal").value;
+  const portais = portaisMarcados("p-portais-lista");
   const arquivo = el("p-arquivo").files[0];
   const msgEl = el("msgPlanilha");
 
-  if (!portal || !arquivo) {
-    mostrarMsg(msgEl, "Selecione o portal e o arquivo .xlsx.", "err");
+  if (portais.length === 0 || !arquivo) {
+    mostrarMsg(msgEl, "Selecione ao menos um portal e o arquivo .xlsx.", "err");
     return;
   }
 
   const form = new FormData();
-  form.append("portal", portal);
+  portais.forEach((p) => form.append("portais", p));
   form.append("planilha", arquivo);
 
   try {
     const resp = await fetchAutenticado(`${gatewayUrl()}/pedidos/planilha`, { method: "POST", body: form });
     const dados = await resp.json();
     if (!resp.ok) throw new Error(dados.detail || "Erro desconhecido");
+    let mensagem = `Lote criado: ${dados.total_validos} linha(s) válida(s) × ${portais.length} portal(is) = ${dados.total_pedidos_criados} pedido(s). ${dados.total_erros_validacao} linha(s) com erro. Lote: ${dados.lote_id.slice(0, 8)}...`;
+    // Sem isso, "2 com erro" não dizia o motivo — precisava abrir o banco
+    // pra descobrir (aconteceu de verdade: coluna "tipo" com "CPF" em vez
+    // de "pf", só descoberto perguntando por fora do sistema).
+    if (dados.erros && dados.erros.length > 0) {
+      const detalhes = dados.erros
+        .map((e) => `Linha ${e.linha}: ${e.erros.join("; ")}`)
+        .join("\n");
+      mensagem += `\n\n${detalhes}`;
+    }
     mostrarMsg(
       msgEl,
-      `Lote criado: ${dados.total_validos} válidos, ${dados.total_erros_validacao} com erro. Lote: ${dados.lote_id.slice(0, 8)}...`,
-      "ok"
+      mensagem,
+      dados.total_pedidos_criados > 0 ? "ok" : "err"
     );
     adicionarLoteRastreado(dados.lote_id, arquivo.name);
     // busca os pedidos do lote pra já rastrear todos
@@ -883,8 +913,14 @@ async function baixarArquivoPedido(pedidoId, tipo, nomeArquivo) {
 // Insere as barras sozinho enquanto digita (só números) — evita erro de
 // digitação de formato ("31032006" em vez de "31/03/2006") sem precisar
 // de biblioteca externa.
+// ⚠️ Esse mesmo campo é reaproveitado pro "Documento do proprietário"
+// do grupo Imóvel (ver PORTAIS_QUE_PRECISAM_DOCUMENTO_PROPRIETARIO) —
+// nesse modo a máscara de data não faz sentido (CPF/CNPJ não é uma
+// data), por isso a flag abaixo desliga a máscara dinamicamente.
+let campoDataEhDocumentoProprietario = false;
 function aplicarMascaraData(elemento) {
   elemento.addEventListener("input", () => {
+    if (campoDataEhDocumentoProprietario) return;
     const digitos = elemento.value.replace(/\D/g, "").slice(0, 8);
     if (digitos.length > 4) {
       elemento.value = `${digitos.slice(0, 2)}/${digitos.slice(2, 4)}/${digitos.slice(4)}`;

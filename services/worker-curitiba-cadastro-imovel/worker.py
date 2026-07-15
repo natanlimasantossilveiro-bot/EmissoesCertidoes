@@ -120,10 +120,12 @@ class CuritibaCertidaoCadastroImovel(AutomacaoNodriverBase):
 
             # A aba nova demora um tempo variável pra aparecer (confirmado
             # contra o site real: às vezes 4s bastam, às vezes não) — em vez
-            # de uma espera fixa, sondamos por até 10s.
-            for _ in range(10):
+            # de uma espera fixa, sondamos por até 15s.
+            nova_aba_apareceu = False
+            for _ in range(15):
                 await page.wait(1)
                 if len(page.browser.tabs) > 1:
+                    nova_aba_apareceu = True
                     break
 
             abas = page.browser.tabs
@@ -150,7 +152,17 @@ class CuritibaCertidaoCadastroImovel(AutomacaoNodriverBase):
 
             caminho_certidao = await self.aguardar_e_mover_pdf(pedido, pdfs_antes, tentativas=8)
             if not caminho_certidao:
+                # ⚠️ Bug real encontrado numa revalidação: quando a aba nova
+                # não aparece (clique não registrou a tempo, ou o site não
+                # abriu dessa vez), esse fallback captura a TELA DE
+                # CONFIRMAÇÃO (com a localização mascarada em asteriscos),
+                # não a declaração final — mas o status seguia
+                # SUCESSO_CONFIRMADO, escondendo o problema. Rebaixamos pra
+                # SUCESSO_PROVAVEL nesse caso, pra aparecer pra revisão
+                # humana em vez de passar como certo silenciosamente.
                 caminho_certidao = await self.salvar_pagina_como_pdf(page, pedido)
+                if not nova_aba_apareceu:
+                    status_final = StatusPedido.SUCESSO_PROVAVEL
 
         return ResultadoEmissao(
             status=status_final,
