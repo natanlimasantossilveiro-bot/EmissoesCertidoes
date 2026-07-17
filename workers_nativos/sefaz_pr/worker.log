@@ -1,0 +1,3 @@
+[fila] Worker escutando fila 'sefaz_pr_certidao_debitos'. Aguardando pedidos...
+Server connection <Connection: "amqp://guest:******@127.0.0.1:5672/" at 0x1ca7ff1eda0> was stuck. No frames were received in 183 seconds.
+Server connection <Connection: "amqp://guest:******@127.0.0.1:5672/" at 0x1ca7ff1f480> was stuck. No frames were received in 183 seconds.

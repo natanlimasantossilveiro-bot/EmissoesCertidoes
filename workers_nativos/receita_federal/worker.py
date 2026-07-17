@@ -86,6 +86,10 @@ from certidoes_core.automacao.nodriver_base import AutomacaoNodriverBase
 class CertidaoConjunta(AutomacaoNodriverBase):
     portal = "receita_federal"
     url_inicial = "https://servicos.receitafederal.gov.br/servico/certidoes/#/home"
+    # Rodando nativo (fora de container, não como root) não precisa e não
+    # deve usar --no-sandbox — é uma flag que denuncia automação (ver
+    # nodriver_base.py) e o motivo pelo qual esse worker roda nativo aqui.
+    requer_no_sandbox = False
 
     async def preencher_e_emitir(self, page, pedido: PedidoCertidao) -> ResultadoEmissao:
         pdfs_antes = self._listar_pdfs_downloads()

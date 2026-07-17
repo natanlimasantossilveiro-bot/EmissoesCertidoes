@@ -27,18 +27,15 @@ formulário é renderizado no servidor, não é SPA):
   reCAPTCHA/hCaptcha/Turnstile no HTML servido. Mais simples que qualquer
   outro portal já construído nesse projeto.
 
-⚠️ **Ponto ainda não validado em automação** (mecânica montada por
-inspeção do HTML servido, não por reconhecimento ao vivo com nodriver —
-essa página não expõe o resultado nem o link de download antes do AJAX
-rodar de verdade num navegador real): depois do resultado "REGULAR"
-aparecer, a tela mostra um link "Obtenha o Certificado de Regularidade
-do FGTS - CRF", que é o PDF de verdade (a mensagem de texto sozinha não
-é o documento). Não temos como saber de antemão se esse link dispara um
-download nativo, abre em nova aba, ou renderiza inline — por isso
-`_capturar_certidao` tenta, nessa ordem: (1) download nativo (mais
-provável, é o padrão desse tipo de certificado gov.br), (2) imprimir a
-própria página como PDF, como último recurso. Precisa de confirmação
-rodando o container de verdade.
+🔴 **Bug real encontrado em uso de produção (17/07)**: depois do resultado
+"REGULAR" aparecer, a tela mostra os dados (inscrição, validade etc.) e um
+botão **"Visualizar"** — só clicando nele é que a certidão de verdade
+carrega. `_capturar_certidao` procurava um link com "certificado" no
+texto, que não existe nessa tela (o botão real se chama "Visualizar", e
+nem é necessariamente um `<a>`) — o clique nunca acontecia, e o worker
+caía direto no plano B (`salvar_pagina_como_pdf`), entregando só a tela de
+resumo em vez da certidão. Corrigido buscando por "visualizar" OU
+"certificado" em `a`, `button` e `input`.
 """
 import asyncio
 import re
@@ -136,14 +133,30 @@ class FgtsCaixa(AutomacaoNodriverBase):
         return {"status": "resultado_indefinido", "mensagem": texto[:1000] or "Resultado não identificado."}
 
     async def _capturar_certidao(self, page, pedido: PedidoCertidao, pdfs_antes: set) -> str:
-        await page.evaluate("""
-            (() => {
-                const links = Array.from(document.querySelectorAll('a'));
-                const link = links.find(a => (a.innerText || '').toLowerCase().includes('certificado'));
-                if (link) link.click();
-            })()
-        """)
-        await page.wait(3)
+        # São DUAS telas em sequência, cada uma com AJAX (A4J.AJAX.Submit,
+        # `return false` — não é navegação de verdade, tem que esperar a
+        # atualização parcial rodar antes do próximo clique):
+        # 1. Resultado "REGULAR" -> link "Obtenha o Certificado de
+        #    Regularidade do FGTS - CRF" -> troca pra uma tela de resumo
+        #    (inscrição, validade, número do certificado).
+        # 2. Essa tela de resumo -> botão "Visualizar" -> só aqui a
+        #    certidão de verdade carrega/baixa. Confirmado ao vivo: clicar
+        #    só a primeira etapa entrega a tela de resumo como se fosse a
+        #    certidão (foi exatamente o bug reportado numa certidão real).
+        for texto_alvo in ("certificado", "visualizar"):
+            clicou = await page.evaluate(f"""
+                (() => {{
+                    const elementos = Array.from(document.querySelectorAll('a, button, input[type="submit"], input[type="button"]'));
+                    const alvo = elementos.find(el => {{
+                        const texto = (el.innerText || el.value || '').trim().toLowerCase();
+                        return texto.includes('{texto_alvo}');
+                    }});
+                    if (alvo) {{ alvo.click(); return true; }}
+                    return false;
+                }})()
+            """)
+            if clicou:
+                await page.wait(3)
         caminho = await self.aguardar_e_mover_pdf(pedido, pdfs_antes, tentativas=10)
         if caminho:
             return caminho

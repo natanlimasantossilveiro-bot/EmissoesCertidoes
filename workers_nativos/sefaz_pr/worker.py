@@ -2,30 +2,38 @@
 Worker do portal SEFAZ PR — Certidão de Débitos Tributários e de Dívida
 Ativa Estadual. Reaproveita AutomacaoNodriverBase.
 
-🔴 **Bloqueado rodando em container (Linux, headless)** — reescrito em
-16/07 a partir de um script próprio do usuário (rodando nativo no Windows
-há semanas, com dezenas de emissões reais bem-sucedidas registradas em
-histórico local) que **nunca resolveu nenhum captcha** pra esse portal. A
-versão anterior deste worker vinha forçando a resolução de um reCAPTCHA
-Enterprise invisível via 2captcha — e o próprio 2captcha devolvia
-`ERROR_CAPTCHA_UNSOLVABLE` nas 3 tentativas testadas, então nunca chegamos
-a confirmar se isso sequer era necessário.
+🟢 **Reescrito em 16/07 a partir de um script próprio do usuário** (rodando
+nativo no Windows há semanas, com dezenas de emissões reais bem-sucedidas
+registradas em histórico local) que **nunca resolveu nenhum captcha** pra
+esse portal. A versão anterior deste worker vinha forçando a resolução de
+um reCAPTCHA Enterprise invisível via 2captcha — e o próprio 2captcha
+devolvia `ERROR_CAPTCHA_UNSOLVABLE` nas 3 tentativas testadas, então nunca
+chegamos a confirmar se isso sequer era necessário.
 
 O script de referência prova que não era: o reCAPTCHA Enterprise invisível
 desse portal roda em modo "score" (mesma família do v3) — o próprio JS do
-Google executa sozinho em segundo plano e gera um token internamente, sem
-exibir nenhum desafio, **desde que o comportamento pareça humano o
-suficiente** pra tirar uma pontuação de risco boa. Testado ao vivo: mesmo
-sem tentar resolver captcha nenhum, o clique em "Emitir" não leva a nada
-dentro do container (Chromium headless em Linux tira nota baixa demais).
-**Esse worker só funciona rodando nativo, num Windows de verdade** — ver
-`workers_nativos/sefaz_pr/worker.py`, onde a mesma lógica abaixo já foi
-validada com um pedido real (chegou a receber uma resposta genuína de
-bloqueio por automação do próprio portal, prova de que o reCAPTCHA estava
-sendo passado). Este arquivo aqui fica como o worker "de container"
-formalmente registrado no docker-compose, mas hoje não é o que roda de
-fato — o container correspondente está parado (`docker compose stop
-worker-sefaz-pr`) pra não competir pela fila com o worker nativo.
+Google executa sozinho em segundo plano e gera um token internamente,
+sem exibir nenhum desafio, **desde que o comportamento pareça humano o
+suficiente** pra tirar uma pontuação de risco boa. Não tem desafio pra
+resolver — tem comportamento pra não levantar suspeita. Daí a mudança:
+
+- Removido: hook de callback do reCAPTCHA Enterprise, chamada ao
+  resolvedor de captcha (2captcha) — nenhuma das duas coisas é usada mais.
+- Adicionado: digitação humanizada (`digitar_devagar`, com pausa aleatória
+  antes de começar a digitar) em vez de setar `.value` via JS — script de
+  referência nunca usou injeção direta de valor, só digitação de verdade.
+- Adicionado: clique explícito no botão de download (texto do ícone
+  Material `file_save`) antes de aguardar o PDF — o worker anterior nunca
+  clicava em nada pra disparar o download, só esperava um arquivo aparecer.
+
+⚠️ **Testado em retry-com-recarga-de-página e descartado**: repetir a
+tentativa dentro da MESMA sessão de navegador (`page.get()` de novo após
+um bloqueio) deixou o campo de documento sem aceitar digitação na
+tentativa seguinte, em teste real. O script de referência nunca faz isso
+— ele abre um navegador NOVO a cada tentativa (`emitir_com_retry`). Esse
+worker não replica esse retry (deixaria o processamento bem mais lento);
+um bloqueio vira ERRO_TECNICO e fica disponível pra nova tentativa manual
+pelo painel.
 """
 import asyncio
 import random
@@ -41,6 +49,10 @@ class SefazPrCertidaoDebitos(AutomacaoNodriverBase):
     portal = "sefaz_pr_certidao_debitos"
     url_inicial = "https://cdwfazenda.paas.pr.gov.br/cdwportal/certidao/automatica"
     espera_inicial_segundos = 5
+    # Rodando nativo (fora de container, não como root) não precisa e não
+    # deve usar --no-sandbox — ver worker do receita_federal para o mesmo
+    # ajuste e o motivo (flag denuncia automação pro reCAPTCHA Enterprise).
+    requer_no_sandbox = False
 
     async def preencher_e_emitir(self, page, pedido: PedidoCertidao) -> ResultadoEmissao:
         pdfs_antes = self._listar_pdfs_downloads()

@@ -1,0 +1,4 @@
+[fila] Worker escutando fila 'receita_federal'. Aguardando pedidos...
+[receita_federal] Pedido b1400204-66be-420d-a904-51cd3ba20185 processado — status: erro_portal
+[receita_federal] Pedido 127b3eb6-a157-48f1-ab4d-f2065f9dde8f processado — status: erro_portal
+Server connection <Connection: "amqp://guest:******@127.0.0.1:5672/" at 0x27b6a39f160> was stuck. No frames were received in 183 seconds.
