@@ -53,6 +53,17 @@ class SefazPrCertidaoDebitos(AutomacaoNodriverBase):
     # deve usar --no-sandbox — ver worker do receita_federal para o mesmo
     # ajuste e o motivo (flag denuncia automação pro reCAPTCHA Enterprise).
     requer_no_sandbox = False
+    # ⚠️ Testado e descartado (20/07): apontar `browser_executable_path`
+    # pro Chrome de verdade instalado na máquina (em vez do Chromium que o
+    # nodriver baixa sozinho) NÃO resolveu — a primeira tentativa ainda
+    # voltou bloqueio de automação, e passar a usar esse binário ainda
+    # introduziu um bug novo (campo de documento não aceitando digitação
+    # direito via esse Chrome específico). Testado também: trocar de rede
+    # (wifi do escritório -> dados móveis) e trocar de documento — nada
+    # mudou o resultado. Um acesso 100% manual (sem nodriver) passa de
+    # primeira com o MESMO CNPJ, na MESMA máquina — aponta pra detecção da
+    # própria conexão de automação (CDP), não de rede/documento/binário.
+    # Sem solução conhecida com as ferramentas atuais.
 
     async def preencher_e_emitir(self, page, pedido: PedidoCertidao) -> ResultadoEmissao:
         pdfs_antes = self._listar_pdfs_downloads()
@@ -106,6 +117,16 @@ class SefazPrCertidaoDebitos(AutomacaoNodriverBase):
         for tentativa in range(1, 4):
             campo = await page.select('input[type="text"]')
             await page.wait(random.uniform(1.5, 3.5))
+            # Clique real (nodriver .click(), com user_gesture=True) antes
+            # de digitar — `elem.apply("(elem) => elem.focus()")` sozinho
+            # (usado dentro de `digitar_devagar`) vinha deixando o campo
+            # sem foco de verdade em boa parte das tentativas de hoje,
+            # mesmo com o navegador com tela aberta (campo ficava vazio
+            # mesmo digitando devagar). Clicar de verdade primeiro é mais
+            # parecido com o que um humano faz, e é mais confiável que só
+            # `.focus()` via JS.
+            await campo.click()
+            await page.wait(0.5)
             await self.digitar_devagar(campo, documento, atraso_segundos=random.uniform(0.1, 0.3))
             await page.wait(1)
 
@@ -123,13 +144,15 @@ class SefazPrCertidaoDebitos(AutomacaoNodriverBase):
             await page.wait(1.5)
 
     async def _clicar_emitir(self, page):
-        await page.evaluate("""
-            (() => {
-                const botoes = Array.from(document.querySelectorAll('button'));
-                const botao = botoes.find(b => b.innerText && b.innerText.toUpperCase().includes('EMITIR'));
-                if (botao) botao.click();
-            })()
-        """)
+        # Clique via page.evaluate() + JS .click() NÃO carrega
+        # `user_gesture=True` no CDP — o script de referência do usuário
+        # usa o `.click()` nativo do próprio nodriver (que carrega essa
+        # flag), e é o único jeito de clicar que já provou passar do
+        # bloqueio real do site. Bem provável que seja exatamente esse
+        # detalhe (não rede/documento/binário do Chrome) que o reCAPTCHA
+        # Enterprise invisível usa pra decidir se o clique é humano.
+        botao = await page.find("EMITIR CERTIDÃO", best_match=True)
+        await botao.click()
 
     async def _clicar_baixar_pdf(self, page):
         await page.wait(3)

@@ -261,29 +261,51 @@ class MpfCertidaoNegativa(AutomacaoNodriverBase):
         # Chromium headless via CDP). Em vez disso, busca o PDF via
         # `fetch()` de dentro da própria página (mesma origem, cookies
         # inclusos automaticamente) e devolve os bytes em base64.
-        base64_pdf = await page.evaluate("""
-            (async () => {
-                const link = document.querySelector('#botaoDownload');
-                if (!link || !link.href) return null;
-                const resposta = await fetch(link.href, { credentials: 'include' });
-                if (!resposta.ok) return null;
-                const buffer = await resposta.arrayBuffer();
-                const bytes = new Uint8Array(buffer);
-                let binario = '';
-                for (let i = 0; i < bytes.length; i++) binario += String.fromCharCode(bytes[i]);
-                return btoa(binario);
-            })()
-        """, await_promise=True)
+        #
+        # Bug real encontrado em uso de produção: pra CNPJ (pessoa
+        # jurídica), esse fetch vinha falhando silenciosamente mesmo com
+        # o site confirmando "certidão gerada com sucesso" e o botão
+        # Download visível — suspeita de uma corrida (o `href` do link
+        # ainda não estava totalmente resolvido no instante do fetch,
+        # já que a consulta de Razão Social tende a ser mais lenta que a
+        # de nome de PF). Adicionado espera antes da primeira tentativa e
+        # retry com diagnóstico (motivo exato da falha registrado no
+        # log), em vez de só devolver vazio sem explicação.
+        await page.wait(2)
+        for tentativa in range(1, 4):
+            resultado_json = await page.evaluate("""
+                (async () => {
+                    const link = document.querySelector('#botaoDownload');
+                    if (!link || !link.href) return JSON.stringify({erro: 'link_ausente'});
+                    try {
+                        const resposta = await fetch(link.href, { credentials: 'include' });
+                        if (!resposta.ok) return JSON.stringify({erro: `http_${resposta.status}`});
+                        const buffer = await resposta.arrayBuffer();
+                        const bytes = new Uint8Array(buffer);
+                        let binario = '';
+                        for (let i = 0; i < bytes.length; i++) binario += String.fromCharCode(bytes[i]);
+                        return JSON.stringify({dados: btoa(binario)});
+                    } catch (erro) {
+                        return JSON.stringify({erro: String(erro)});
+                    }
+                })()
+            """, await_promise=True)
 
-        if not isinstance(base64_pdf, str) or not base64_pdf:
-            return ""
-        dados = base64.b64decode(base64_pdf)
-        if len(dados) < 1024:
-            return ""
-        PASTA_CERTIDOES_EMITIDAS.mkdir(parents=True, exist_ok=True)
-        destino = PASTA_CERTIDOES_EMITIDAS / self.nome_arquivo_certidao(pedido)
-        destino.write_bytes(dados)
-        return str(destino)
+            resultado = json.loads(resultado_json) if isinstance(resultado_json, str) else {}
+            base64_pdf = resultado.get("dados")
+            if isinstance(base64_pdf, str) and base64_pdf:
+                dados = base64.b64decode(base64_pdf)
+                if len(dados) >= 1024:
+                    PASTA_CERTIDOES_EMITIDAS.mkdir(parents=True, exist_ok=True)
+                    destino = PASTA_CERTIDOES_EMITIDAS / self.nome_arquivo_certidao(pedido)
+                    destino.write_bytes(dados)
+                    return str(destino)
+
+            print(f"[{self.portal}] Falha ao baixar certidão via fetch na tentativa {tentativa}/3: "
+                  f"{resultado.get('erro', 'motivo desconhecido')}")
+            await page.wait(2)
+
+        return ""
 
     @staticmethod
     def _determinar_status_final(status_emissao: str) -> StatusPedido:

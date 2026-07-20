@@ -67,7 +67,9 @@ services:
       - worker_curitiba_imovel_data:/dados-workers/curitiba_certidao_cadastro_imovel:ro
       - worker_curitiba_debitos_data:/dados-workers/curitiba_consulta_debitos_divida_ativa:ro
       - C:/data:/dados-workers/sefaz_pr_certidao_debitos:ro
-      - worker_atendenet_pinhais_data:/dados-workers/atendenet_pinhais_cnd:ro
+      # atendenet_pinhais_cnd também roda nativo no Windows agora, mesmo
+      # motivo do receita_federal/sefaz_pr_certidao_debitos acima.
+      - C:/data:/dados-workers/atendenet_pinhais_cnd:ro
       - worker_fgts_caixa_data:/dados-workers/fgts_caixa:ro
       - worker_mpf_certidao_data:/dados-workers/mpf_certidao_negativa:ro
       - worker_curitiba_cnd_cpf_data:/dados-workers/curitiba_cnd_cpf:ro

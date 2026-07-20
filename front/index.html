@@ -643,6 +643,19 @@ const GRUPO_DOCUMENTO_POR_PORTAL = {
 };
 const TITULO_GRUPO = { cpf_cnpj: "CPF / CNPJ", imovel: "Indicação Fiscal (imóvel)" };
 
+// Alguns portais do grupo "cpf_cnpj" na verdade só funcionam com UM dos
+// dois tipos (o site rejeita o outro) — mas o agrupamento em si permite
+// selecionar qualquer um, então nada impedia de mandar CNPJ pra um
+// portal só-CPF (ou o contrário). Confirmado em teste real: o
+// curitiba_cnd_cpf ("Certidão de Tributos Municipais - Pessoa Física")
+// devolveu "CPF Inválido" recebendo um CNPJ, porque o sistema cortou os
+// 14 dígitos pra caber num formato de CPF. Isso aqui só documenta a
+// restrição pra validar antes de enviar (ver função abaixo) — não
+// precisa adicionar toda vez que um portal aceitar os dois tipos.
+const TIPO_DOCUMENTO_RESTRITO_POR_PORTAL = {
+  curitiba_cnd_cpf: "pf",
+};
+
 // Dentro do grupo Imóvel, esse portal específico pede um SEGUNDO
 // documento (CPF/CNPJ do proprietário), além da Indicação Fiscal — os
 // outros dois portais de Imóvel não precisam disso. Reaproveita o mesmo
@@ -731,12 +744,14 @@ function renderizarListaPortais(containerId, portais) {
     for (const { chave, label } of grupos[grupo]) {
       const info = STATUS_PORTAL[chave] || { nivel: "teste", texto: "🧪 Status ainda não catalogado" };
       const emoji = info.nivel === "ok" ? "✅" : info.nivel === "parcial" ? "🟡" : "🧪";
+      const restricao = TIPO_DOCUMENTO_RESTRITO_POR_PORTAL[chave];
+      const sufixoRestricao = restricao ? ` (somente ${restricao.toUpperCase()})` : "";
       const item = document.createElement("label");
       item.className = "portal-item";
       item.title = info.texto;
       item.innerHTML = `
         <input type="checkbox" value="${chave}" data-grupo="${grupo}">
-        <span>${label}</span>
+        <span>${label}${sufixoRestricao}</span>
         <span class="badge-mini">${emoji}</span>
       `;
       container.appendChild(item);
@@ -796,6 +811,22 @@ el("btnCriarPedido").addEventListener("click", async () => {
 
   if (portais.length === 0 || !nome || !documento) {
     mostrarMsg(msgEl, "Selecione ao menos um portal e preencha nome e documento.", "err");
+    return;
+  }
+
+  const portaisIncompativeis = portais.filter((p) => {
+    const restricao = TIPO_DOCUMENTO_RESTRITO_POR_PORTAL[p];
+    return restricao && restricao !== tipo;
+  });
+  if (portaisIncompativeis.length > 0) {
+    const nomes = portaisIncompativeis.map((p) => portaisCache[p] || p).join(", ");
+    mostrarMsg(
+      msgEl,
+      `${nomes} só aceita${portaisIncompativeis.length > 1 ? "m" : ""} documento do tipo ` +
+        `${TIPO_DOCUMENTO_RESTRITO_POR_PORTAL[portaisIncompativeis[0]].toUpperCase()} — desmarque ` +
+        `${portaisIncompativeis.length > 1 ? "esses portais" : "esse portal"} ou troque o Tipo.`,
+      "err"
+    );
     return;
   }
 
@@ -1050,6 +1081,18 @@ function inicializarApp() {
   // DLQ muda bem mais devagar que o status de um pedido — confere a
   // cada 20s em vez de junto com a tabela.
   setInterval(verificarDLQ, 20000);
+
+  // Navegador "segura" o setInterval acima quando a aba fica em segundo
+  // plano (throttling padrão do Chrome pra economizar recursos) — sem
+  // isso, quem troca de aba pra ver WhatsApp/e-mail enquanto espera um
+  // pedido volta pra uma tabela desatualizada. Força uma atualização
+  // imediata assim que a aba volta a ficar visível.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      atualizarTabela();
+      verificarDLQ();
+    }
+  });
 }
 
 // inicialização

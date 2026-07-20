@@ -148,6 +148,13 @@ class AutomacaoNodriverBase(AutomacaoPortal):
     # (Chromium recusa abrir); um worker cujo Dockerfile roda como
     # usuário comum pode e deve setar isso como False.
     requer_no_sandbox: bool = True
+    # None = usa o Chromium que o próprio nodriver baixa (padrão). Setar
+    # pra um caminho real (ex: instalação normal do Chrome no Windows)
+    # quando o fingerprint desse Chromium bundled estiver sendo detectado
+    # como automação mesmo rodando nativo, com tela e sem --no-sandbox —
+    # caso confirmado no SEFAZ PR: acesso manual no Chrome instalado da
+    # máquina passou de primeira, o Chromium do nodriver não.
+    browser_executable_path: str = None
 
     @abstractmethod
     async def preencher_e_emitir(self, page, pedido: PedidoCertidao) -> ResultadoEmissao:
@@ -166,6 +173,7 @@ class AutomacaoNodriverBase(AutomacaoPortal):
         browser = await nd.start(
             headless=config.BROWSER_HEADLESS,
             browser_args=browser_args,
+            browser_executable_path=self.browser_executable_path,
         )
         try:
             page = await browser.get("about:blank")
