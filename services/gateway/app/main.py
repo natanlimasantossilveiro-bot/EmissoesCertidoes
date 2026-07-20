@@ -527,3 +527,21 @@ def baixar_relatorio_lote(lote_id: str, _usuario: Usuario = Depends(obter_usuari
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="relatorio_lote_{lote_id[:8]}.xlsx"'},
     )
+
+
+# ── Frontend estático ─────────────────────────────────────────────────────────
+# Serve index.html e admin.html diretamente pelo gateway, para que o front e a
+# API fiquem sempre na mesma origem — elimina a necessidade de configurar uma
+# URL separada do gateway e resolve o erro "not valid JSON" causado pelo
+# localStorage guardando uma URL de ngrok antiga.
+_FRONT_DIR = Path(__file__).resolve().parent.parent / "front"
+
+
+@app.get("/")
+def _serve_index():
+    return FileResponse(_FRONT_DIR / "index.html")
+
+
+@app.get("/admin")
+def _serve_admin():
+    return FileResponse(_FRONT_DIR / "admin.html")
