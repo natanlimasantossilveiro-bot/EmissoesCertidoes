@@ -416,7 +416,8 @@ function usuarioAtual() {
 
 function cabecalhosAuth() {
   const t = token();
-  return t ? { "Authorization": `Bearer ${t}` } : {};
+  const base = { "ngrok-skip-browser-warning": "true" };
+  return t ? { ...base, "Authorization": `Bearer ${t}` } : base;
 }
 
 // Wrapper em volta de fetch: manda o token automaticamente, e se o
@@ -493,7 +494,7 @@ el("btnLogin").addEventListener("click", async () => {
   try {
     const resp = await fetch(`${gatewayUrl()}/auth/login`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
       body: JSON.stringify({ email, senha }),
     });
     const dados = await resp.json();
@@ -665,6 +666,34 @@ const TIPO_DOCUMENTO_RESTRITO_POR_PORTAL = {
 // isolado.
 const PORTAIS_QUE_PRECISAM_DOCUMENTO_PROPRIETARIO = new Set(["curitiba_certidao_tributos_imovel"]);
 
+// TRF4 não usa "tipo" pra PF/PJ — o próprio site identifica isso sozinho
+// pelo tamanho do CPF/CNPJ digitado. Em vez disso, precisa saber QUAL das
+// 3 certidões emitir (Cível/Criminal/Eleitoral, ver TIPO_CERTIDAO_PARA_CODIGO
+// no worker). Reaproveita o mesmo campo "Tipo" (já existe, já é enviado
+// como pedido.tipo), só trocando as opções do <select> quando esse portal
+// está marcado — mesma lógica de reaproveitamento já usada pro Imóvel.
+const PORTAIS_TRF4_TIPO_CERTIDAO = new Set(["trf4_certidao_civel_criminal"]);
+const OPCOES_TIPO_PADRAO = [
+  { valor: "pf", texto: "PF" },
+  { valor: "pj", texto: "PJ" },
+];
+const OPCOES_TIPO_TRF4 = [
+  { valor: "civel", texto: "Judicial Cível" },
+  { valor: "criminal", texto: "Judicial Criminal" },
+  { valor: "eleitoral", texto: "Judicial para Fins Eleitorais" },
+];
+
+function definirOpcoesTipo(opcoes) {
+  const select = el("f-tipo");
+  select.innerHTML = "";
+  for (const { valor, texto } of opcoes) {
+    const opt = document.createElement("option");
+    opt.value = valor;
+    opt.textContent = texto;
+    select.appendChild(opt);
+  }
+}
+
 const CAMPOS_POR_GRUPO = {
   cpf_cnpj: {
     labelDocumento: "Documento (CPF/CNPJ, só números)",
@@ -684,8 +713,21 @@ function atualizarCamposPedido(grupo, portaisSelecionados) {
   const config = CAMPOS_POR_GRUPO[grupo] || CAMPOS_POR_GRUPO.cpf_cnpj;
   el("f-documento-label").textContent = config.labelDocumento;
   el("f-documento").placeholder = config.placeholderDocumento;
-  el("f-tipo-label").style.display = config.mostrarTipo ? "" : "none";
-  el("f-tipo").style.display = config.mostrarTipo ? "" : "none";
+
+  const precisaTipoCertidaoTrf4 = (portaisSelecionados || []).some(
+    (p) => PORTAIS_TRF4_TIPO_CERTIDAO.has(p)
+  );
+  if (precisaTipoCertidaoTrf4) {
+    el("f-tipo-label").textContent = "Tipo de certidão (TRF4)";
+    definirOpcoesTipo(OPCOES_TIPO_TRF4);
+    el("f-tipo-label").style.display = "";
+    el("f-tipo").style.display = "";
+  } else {
+    el("f-tipo-label").textContent = "Tipo";
+    definirOpcoesTipo(OPCOES_TIPO_PADRAO);
+    el("f-tipo-label").style.display = config.mostrarTipo ? "" : "none";
+    el("f-tipo").style.display = config.mostrarTipo ? "" : "none";
+  }
 
   const precisaDocProprietario = (portaisSelecionados || []).some(
     (p) => PORTAIS_QUE_PRECISAM_DOCUMENTO_PROPRIETARIO.has(p)
@@ -695,9 +737,14 @@ function atualizarCamposPedido(grupo, portaisSelecionados) {
   el("f-data-label").classList.toggle("show", mostrarCampoData);
   campoDataEhDocumentoProprietario = precisaDocProprietario;
   if (precisaDocProprietario) {
-    el("f-data-label").textContent = "Documento do proprietário (CPF/CNPJ, só números)";
-    el("f-data").placeholder = "00000000000";
-    el("f-data").maxLength = 14;
+    el("f-data-label").textContent = "Documento do proprietário (CPF/CNPJ, com ou sem pontuação)";
+    el("f-data").placeholder = "000.000.000-00 ou 00.000.000/0000-00";
+    // 19 = tamanho de um CNPJ formatado ("00.000.000/0000-00") — a
+    // pontuação é só pra facilitar digitação, é removida antes de
+    // enviar (ver btnCriarPedido) porque o site pede só números e a
+    // coluna do banco (data_nascimento) é pequena demais pro CNPJ com
+    // pontuação inteiro.
+    el("f-data").maxLength = 19;
   } else {
     el("f-data-label").textContent = "Data de nascimento (dd/mm/aaaa)";
     el("f-data").placeholder = "01/01/1990";
@@ -710,21 +757,21 @@ function atualizarCamposPedido(grupo, portaisSelecionados) {
 // do portal, não o quão maduro o worker está. Sem isso, um colaborador não
 // tem como saber, só olhando o seletor, quais portais já são confiáveis.
 const STATUS_PORTAL = {
-  receita_federal: { nivel: "parcial", texto: "🟡 Bloqueado rodando em Docker — a Receita recusa esse serviço específico nesse ambiente. Emissão manual por enquanto" },
+  receita_federal: { nivel: "ok", texto: "✅ Validado de ponta a ponta rodando nativo no Windows — \"Certidão Válida Encontrada\" e PDF real baixado" },
   cpf_situacao_cadastral: { nivel: "ok", texto: "✅ Validado de ponta a ponta (com captcha real)" },
   tst_cndt: { nivel: "ok", texto: "✅ Validado de ponta a ponta (com captcha real)" },
   curitiba_certidao_cadastro_imovel: { nivel: "ok", texto: "✅ Validado de ponta a ponta (com captcha real)" },
   curitiba_consulta_debitos_divida_ativa: { nivel: "ok", texto: "✅ Validado de ponta a ponta (com captcha real) — consulta informativa, não é certidão formal" },
   cnpj_qsa: { nivel: "parcial", texto: "🟡 Submissão funciona, backend rejeita o captcha (investigação em andamento)" },
-  trf4_certidao_civel_criminal: { nivel: "parcial", texto: "🟡 Submissão validada — download final bloqueado por bug do site do TRF4" },
-  sefaz_pr_certidao_debitos: { nivel: "parcial", texto: "🟡 2captcha não consegue resolver o captcha desse portal ainda" },
-  atendenet_pinhais_cnd: { nivel: "parcial", texto: "🟡 Sem captcha, caminho de \"não encontrado\" validado — caminho de sucesso ainda não confirmado com CPF/CNPJ real de Pinhais" },
+  trf4_certidao_civel_criminal: { nivel: "ok", texto: "✅ Validado de ponta a ponta (reCAPTCHA v2 via 2captcha) — certidão real emitida com QR code de autenticidade" },
+  sefaz_pr_certidao_debitos: { nivel: "parcial", texto: "🟡 Rodando nativo no Windows, mas o site ainda detecta e bloqueia a automação — só o acesso 100% manual passa" },
+  atendenet_pinhais_cnd: { nivel: "ok", texto: "✅ Validado de ponta a ponta rodando nativo no Windows — certidão real emitida (nº 45963/2026, \"INEXISTEM DÉBITOS\")" },
   fgts_caixa: { nivel: "ok", texto: "✅ Validado de ponta a ponta (sem captcha) — CRF real capturado" },
   mpf_certidao_negativa: { nivel: "ok", texto: "✅ Validado de ponta a ponta (Cloudflare Turnstile resolvido)" },
   curitiba_cnd_cpf: { nivel: "ok", texto: "✅ Validado de ponta a ponta (captcha Altcha, sem custo)" },
   trt9_certidao_trabalhista: { nivel: "ok", texto: "✅ Validado de ponta a ponta (captcha de imagem via 2captcha)" },
   mpt_certidao_negativa: { nivel: "parcial", texto: "🟡 2captcha raramente consegue resolver o captcha desse portal (reCAPTCHA Enterprise)" },
-  curitiba_certidao_tributos_imovel: { nivel: "parcial", texto: "🟡 Precisa do campo \"Documento do proprietário\" preenchido — ainda não validado de ponta a ponta" },
+  curitiba_certidao_tributos_imovel: { nivel: "ok", texto: "✅ Validado de ponta a ponta (captcha Altcha, sem custo) — certidão positiva real emitida, PDF oficial com QR code" },
 };
 
 function renderizarListaPortais(containerId, portais) {
@@ -806,7 +853,13 @@ el("btnCriarPedido").addEventListener("click", async () => {
   const nome = el("f-nome").value.trim();
   const tipo = el("f-tipo").value;
   const documento = el("f-documento").value.trim();
-  const dataNascimento = el("f-data").value.trim();
+  // Documento do proprietário aceita pontuação na digitação (mais
+  // natural pra quem está copiando de um CNPJ/CPF já formatado), mas o
+  // worker e o banco esperam só dígitos — remove a pontuação aqui, sem
+  // exigir que o colaborador digite "certo".
+  const dataNascimento = campoDataEhDocumentoProprietario
+    ? el("f-data").value.trim().replace(/\D/g, "")
+    : el("f-data").value.trim();
   const msgEl = el("msgPedido");
 
   if (portais.length === 0 || !nome || !documento) {
@@ -828,6 +881,40 @@ el("btnCriarPedido").addEventListener("click", async () => {
       "err"
     );
     return;
+  }
+
+  // TRF4 usa o campo "Tipo" pra escolher Cível/Criminal/Eleitoral — não dá
+  // pra combinar numa mesma solicitação com outro portal do grupo CPF/CNPJ
+  // que precisa desse mesmo campo pra PF/PJ (mesmo campo, dois
+  // significados diferentes e incompatíveis).
+  const temTrf4 = portais.some((p) => PORTAIS_TRF4_TIPO_CERTIDAO.has(p));
+  const outrosPortaisCpfCnpj = portais.filter((p) => !PORTAIS_TRF4_TIPO_CERTIDAO.has(p));
+  if (temTrf4 && outrosPortaisCpfCnpj.length > 0) {
+    mostrarMsg(
+      msgEl,
+      "A Certidão Judicial (TRF4) usa o campo \"Tipo\" pra escolher Cível/Criminal/Eleitoral — " +
+        "solicite separado dos outros portais marcados.",
+      "err"
+    );
+    return;
+  }
+
+  // Confere se o Tipo (PF/PJ) bate com a quantidade de dígitos do
+  // documento — confirmado num teste real: selecionar "PF" e digitar um
+  // CNPJ faz o worker preencher o campo errado no site (CPF em vez de
+  // Raiz do CNPJ), e o site recusa com "Dígito verificador inválido" sem
+  // ficar claro que a causa foi só o Tipo errado. Só vale pra PF/PJ — não
+  // se aplica quando o Tipo virou Cível/Criminal/Eleitoral (TRF4).
+  if (!temTrf4 && (tipo === "pf" || tipo === "pj")) {
+    const digitos = documento.replace(/\D/g, "");
+    if (tipo === "pf" && digitos.length === 14) {
+      mostrarMsg(msgEl, "O documento tem 14 dígitos (formato de CNPJ), mas o Tipo está como PF — troque pra PJ ou confira o documento.", "err");
+      return;
+    }
+    if (tipo === "pj" && digitos.length === 11) {
+      mostrarMsg(msgEl, "O documento tem 11 dígitos (formato de CPF), mas o Tipo está como PJ — troque pra PF ou confira o documento.", "err");
+      return;
+    }
   }
 
   const form = new FormData();

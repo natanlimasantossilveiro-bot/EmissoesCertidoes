@@ -40,4 +40,9 @@ def _salvar_s3(nome_arquivo: str, conteudo: bytes) -> str:
 
 def gerar_nome_evidencia(nome_pessoa: str, documento: str, portal: str, motivo: str, extensao: str = "png") -> str:
     data_hora = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"{portal}/{motivo}_{normalizar_nome_arquivo(nome_pessoa)}_{documento}_{data_hora}.{extensao}"
+    # CNPJ formatado com barra (ex: "37.187.679/0001-80") quebra o caminho
+    # do arquivo — a barra vira separador de pasta, criando uma subpasta
+    # extra e inesperada em vez de fazer parte do nome do arquivo (mesmo
+    # bug, mesma correção, já aplicada em gerar_nome_certidao).
+    documento_seguro = (documento or "").replace("/", "-")
+    return f"{portal}/{motivo}_{normalizar_nome_arquivo(nome_pessoa)}_{documento_seguro}_{data_hora}.{extensao}"

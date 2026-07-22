@@ -111,7 +111,25 @@ class CertidaoConjunta(AutomacaoNodriverBase):
 
         caminho_certidao = ""
         if status_final in (StatusPedido.SUCESSO_CONFIRMADO, StatusPedido.SUCESSO_PROVAVEL):
-            caminho_certidao = await self.aguardar_e_mover_pdf(pedido, pdfs_antes)
+            # A página de resultado ("Resultado da Emissão de Certidão") às
+            # vezes não dispara o download automático sozinha — ela mesma
+            # avisa: "Caso não ocorra o download automático da certidão,
+            # faça o download do documento PDF da certidão." O link é uma
+            # URL `blob:` (PDF gerado em memória pelo JS da própria página,
+            # não um arquivo servido por URL normal) com atributo
+            # `download` — confirmado em teste real que nem um clique
+            # nativo (com user_gesture=True) faz o Chrome de fato salvar
+            # esse blob em disco (sem erro nenhum, só não acontece). A
+            # solução que funciona de verdade é ler o conteúdo do blob via
+            # JS (`baixar_blob_url`) e escrever os bytes direto, sem
+            # depender do gerenciador de download do navegador.
+            blob_url = await self._achar_link_download_href(page)
+            if blob_url:
+                dados_pdf = await self.baixar_blob_url(page, blob_url)
+                if dados_pdf:
+                    caminho_certidao = await self.salvar_bytes_como_pdf(pedido, dados_pdf)
+            if not caminho_certidao:
+                caminho_certidao = await self.aguardar_e_mover_pdf(pedido, pdfs_antes, tentativas=5)
             if not caminho_certidao:
                 # "Emitir Nova Certidão" dispara a emissão mas não
                 # necessariamente um download de arquivo real (às vezes só
@@ -194,6 +212,24 @@ class CertidaoConjunta(AutomacaoNodriverBase):
         """)
         await page.wait(5)
 
+    async def _achar_link_download_href(self, page, tentativas: int = 10) -> str:
+        # Clicar cedo demais (uma tentativa só, logo após "Emitir Nova
+        # Certidão") pega a página ainda na tela ANTERIOR, antes de navegar
+        # pra "Resultado da Emissão de Certidão" — o link nem existe ainda
+        # nesse momento. Por isso o polling, em vez de checar uma vez só.
+        for _ in range(tentativas):
+            href = await page.evaluate("""
+                (() => {
+                    const links = Array.from(document.querySelectorAll('a'));
+                    const l = links.find(a => (a.innerText || '').toLowerCase().includes('download do documento'));
+                    return l ? l.href : null;
+                })()
+            """)
+            if href:
+                return href
+            await page.wait(1)
+        return ""
+
     async def _verificar_resultado_emissao(self, page):
         # page.evaluate() devolve objetos JS via CDP DeepSerializedValue (uma
         # lista de pares [chave, valor], não um dict) — por isso serializamos
@@ -213,6 +249,15 @@ class CertidaoConjunta(AutomacaoNodriverBase):
                 }
                 if (!resultado && bodyText.includes('Não foi possível concluir a ação')) {
                     resultado = {status: 'erro_receita', mensagem: 'A Receita Federal retornou erro.'};
+                }
+                if (!resultado && bodyText.includes('insuficientes') && bodyText.includes('pela Internet')) {
+                    // Recusa de negócio legítima da própria Receita (comum em
+                    // CNPJ com cadastro incompleto) — confirmado em teste real.
+                    // Sem esse reconhecimento, cai no "resultado_indefinido"
+                    // (sucesso_provável), o que confunde quem revisa depois:
+                    // parece que "meio que funcionou" quando na verdade foi
+                    // uma recusa clara e definitiva.
+                    resultado = {status: 'erro_receita', mensagem: 'Informações insuficientes na Receita Federal para emitir a certidão pela Internet (cadastro incompleto do contribuinte).'};
                 }
                 if (!resultado && bodyText.includes('Certidão emitida')) {
                     resultado = {status: 'certidao_emitida', mensagem: 'Certidão emitida com sucesso.'};

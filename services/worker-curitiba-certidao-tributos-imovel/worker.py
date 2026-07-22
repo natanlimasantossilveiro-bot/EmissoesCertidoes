@@ -91,14 +91,34 @@ class CuritibaCertidaoTributosImovel(AutomacaoNodriverBase):
 
         await self._clicar_gerar_certidao(page)
         await self._tratar_aviso_certidao_existente(page)
-        await page.wait(4)
+        # Numa geração NOVA (sem "já existe certidão"), o site processa a
+        # certidão de forma assíncrona no servidor — mostra um spinner
+        # "Aguardando processamento ..." e só dispara o download real do
+        # PDF quando esse processamento termina. Interpretar o resultado
+        # antes disso pega o spinner no meio do caminho (confirmado em
+        # teste real: virava ERRO_TECNICO por bater no texto do próprio
+        # spinner, ou o download real ainda nem tinha começado).
+        await self._aguardar_processamento_finalizar(page)
+        await page.wait(2)
 
         resultado_bruto = await self._interpretar_resultado(page)
         status_final = self._determinar_status_final(resultado_bruto["status"])
 
         caminho_certidao = ""
         if status_final in (StatusPedido.SUCESSO_CONFIRMADO, StatusPedido.SUCESSO_PROVAVEL):
-            caminho_certidao = await self.aguardar_e_mover_pdf(pedido, pdfs_antes, tentativas=10)
+            # Sem esse clique, nada dispara o download real do site — o
+            # worker cai direto no fallback de "imprimir a página atual em
+            # PDF", que captura a tela inteira (modal, scrollbar, botões)
+            # em vez do documento oficial que o próprio "Baixar" gera.
+            # Só existe quando o modal "já existe certidão" leva a um
+            # visualizador com botão "Baixar"; numa geração nova o próprio
+            # site dispara o download sozinho, esse clique só não acha nada.
+            await self._clicar_baixar_certidao(page)
+            # Janela maior de espera (20s): o download real só começa depois
+            # do processamento assíncrono do servidor, confirmado mais lento
+            # que os 10s usados originalmente (a mesma janela que funciona
+            # bem pros outros portais de Curitiba).
+            caminho_certidao = await self.aguardar_e_mover_pdf(pedido, pdfs_antes, tentativas=20)
             if not caminho_certidao:
                 caminho_certidao = await self.salvar_pagina_como_pdf(page, pedido)
 
@@ -172,6 +192,24 @@ class CuritibaCertidaoTributosImovel(AutomacaoNodriverBase):
                 return
             await page.wait(1)
 
+    async def _aguardar_processamento_finalizar(self, page, tentativas: int = 15):
+        for _ in range(tentativas):
+            texto = await page.evaluate("(() => document.body.innerText)()")
+            texto_lower = (texto or "").lower()
+            if "aguardando processamento" not in texto_lower:
+                return
+            await page.wait(1)
+
+    async def _clicar_baixar_certidao(self, page):
+        await page.evaluate("""
+            (() => {
+                const elementos = Array.from(document.querySelectorAll('button, a'));
+                const botao = elementos.find(el => (el.innerText || '').trim() === 'Baixar');
+                if (botao) { botao.click(); return true; }
+                return false;
+            })()
+        """)
+
     async def _interpretar_resultado(self, page) -> dict:
         texto = await page.evaluate("(() => document.body.innerText)()")
         texto = texto.strip() if isinstance(texto, str) else ""
@@ -186,6 +224,15 @@ class CuritibaCertidaoTributosImovel(AutomacaoNodriverBase):
             return {"status": "certidao_emitida", "mensagem": "Certidão positiva gerada (há pendências)."}
         if "indicação fiscal" in texto_lower and "inválid" in texto_lower:
             return {"status": "erro_portal", "mensagem": "Indicação Fiscal rejeitada pelo portal como inválida."}
+        # Confirmado testando com dado real (21/07): o conteúdo da certidão
+        # (positiva/negativa) fica dentro de um visualizador de PDF interno
+        # ao modal — texto ilegível via document.body.innerText, mas o
+        # conjunto de botões "Imprimir/Baixar/Pendências" só aparece quando
+        # a certidão foi realmente gerada. O PDF de verdade já é baixado à
+        # parte por aguardar_e_mover_pdf logo abaixo; aqui só confirmamos o
+        # sucesso, sem tentar adivinhar positiva/negativa pelo texto.
+        if "imprimir" in texto_lower and "baixar" in texto_lower and "pendências" in texto_lower:
+            return {"status": "certidao_emitida", "mensagem": "Certidão gerada (positiva ou negativa — conteúdo real está no PDF baixado, ilegível via texto da página por estar num visualizador interno)."}
         if "aguardando processamento" in texto_lower:
             return {
                 "status": "erro_tecnico",

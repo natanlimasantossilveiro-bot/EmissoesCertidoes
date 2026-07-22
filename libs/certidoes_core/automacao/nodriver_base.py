@@ -177,6 +177,17 @@ class AutomacaoNodriverBase(AutomacaoPortal):
         )
         try:
             page = await browser.get("about:blank")
+            # A flag `--download-directory` (acima) não é mais respeitada
+            # pelo Chrome/Chromium atual — confirmado num teste real
+            # (Curitiba Imóvel): o PDF baixava de verdade, só que ia parar
+            # no Downloads padrão do perfil (`/root/Downloads` no
+            # container), não na pasta que `aguardar_e_mover_pdf` observa,
+            # fazendo o worker cair sempre no fallback de screenshot mesmo
+            # com o download real tendo funcionado. `Browser.setDownloadBehavior`
+            # via CDP é o mecanismo atual suportado — substitui a flag.
+            await page.send(nd.cdp.browser.set_download_behavior(
+                behavior="allow", download_path=str(config.BROWSER_DOWNLOAD_DIR)
+            ))
             if (self.usar_hook_hcaptcha_callback or self.usar_hook_recaptcha_enterprise_callback
                     or self.usar_hook_turnstile_callback):
                 # Page.enable é obrigatório aqui — sem isso,
@@ -247,6 +258,46 @@ class AutomacaoNodriverBase(AutomacaoPortal):
                 return str(destino)
             await asyncio.sleep(1)
         return ""
+
+    async def baixar_blob_url(self, page, blob_url: str) -> bytes | None:
+        """Lê o conteúdo de uma URL `blob:` (PDF gerado em memória no
+        próprio JS da página, comum em links com atributo `download`) via
+        `fetch()` dentro da página, convertendo pra base64 com FileReader.
+        Bypassa por completo o gerenciador de download do Chrome — usado
+        quando um clique real (nativo, com user_gesture) no link ainda
+        assim não resulta em nenhum arquivo na pasta observada por
+        `aguardar_e_mover_pdf` (confirmado num teste real: Receita
+        Federal, link com `href="blob:...", download="Certidao...pdf"`,
+        clique nativo sem erro nenhum, mas nada aparece no disco)."""
+        if not blob_url or not blob_url.startswith("blob:"):
+            return None
+        try:
+            base64_dados = await page.evaluate(f"""
+                (async () => {{
+                    const resp = await fetch("{blob_url}");
+                    const blob = await resp.blob();
+                    return await new Promise((resolve) => {{
+                        const reader = new FileReader();
+                        reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                        reader.readAsDataURL(blob);
+                    }});
+                }})()
+            """, await_promise=True)
+            if not base64_dados:
+                return None
+            return base64.b64decode(base64_dados)
+        except Exception as erro:
+            print(f"[{self.portal}] Falha ao ler blob URL: {erro}")
+            return None
+
+    async def salvar_bytes_como_pdf(self, pedido: PedidoCertidao, dados: bytes) -> str:
+        """Mesmo destino/nomeação de `salvar_pagina_como_pdf`, mas a partir
+        de bytes já obtidos (ex: via `baixar_blob_url`), sem precisar de
+        `page.send(cdp.page.print_to_pdf(...))`."""
+        PASTA_CERTIDOES_EMITIDAS.mkdir(parents=True, exist_ok=True)
+        destino = PASTA_CERTIDOES_EMITIDAS / self.nome_arquivo_certidao(pedido)
+        destino.write_bytes(dados)
+        return str(destino)
 
     async def salvar_pagina_como_pdf(self, page, pedido: PedidoCertidao) -> str:
         """Alguns portais (ex: CPF) não disparam um download de PDF de

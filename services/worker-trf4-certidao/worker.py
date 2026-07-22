@@ -42,37 +42,29 @@ nascimento divergente da Receita Federal" no span vermelho), e a
 identificação do nome ("NATAN JONATAN DE LIMA") saiu correta em todas as
 tentativas. Em caso de sucesso, o portal NÃO baixa o PDF direto — mostra
 uma tela de CONFIRMAÇÃO ("Certidão Judicial Cível/Criminal Nome: ... CPF:
-...") com um `<input type="button">` "VISUALIZAR CERTIDÃO GERADA" cujo
-`onclick` faz `window.location = '../../certidao_balcao/certidao_emite_cjf.php?num_contro_certid=N&num_cpf_cgc_judici=...&nom_parte_judici=...'`.
+...") com um botão "VISUALIZAR CERTIDÃO GERADA".
 
-🔴 **Conclusão após investigação extensiva (5 emissões reais com captcha
-pago)**: o botão "VISUALIZAR CERTIDÃO GERADA" do próprio site do TRF4
-aponta pra um caminho **quebrado**. Testado de 3 formas independentes,
-todas com o mesmo resultado de erro:
-1. Clique direto no navegador (deixando o `window.location` do site
-   resolver) → "Bad Request" (erro genérico do Apache).
-2. `curl` isolado na URL resolvida manualmente (`urljoin(page.url,
-   caminho_relativo)`) → 404 "Página não encontrada" (página própria do
-   TRF4, não é bloqueio de borda).
-3. Navegação direta via `page.get()` com a mesma URL calculada
-   corretamente → também 404, inclusive testado de novo após 3s de espera
-   (descarta hipótese de geração assíncrona do PDF).
-
-Ou seja: não é bug do nosso código — é o próprio botão do TRF4 apontando
-pra um endpoint que não existe (`/trf4/certidao_balcao/certidao_emite_cjf.php`).
-Isso só afeta o ÚLTIMO passo (baixar o PDF assinado); a parte que
-realmente importa — o pedido chegar, ser conferido contra a Receita
-Federal, e a certidão ser efetivamente GERADA no sistema do TRF4 — está
-100% validada (5 emissões confirmadas, nome/CPF sempre corretos, zero
-erros de submissão). `_obter_url_visualizar_certidao()` fica implementado
-(extrai a URL via regex do `onclick` e resolve com `urljoin`) caso o TRF4
-corrija esse link no futuro — nesse caso, o download deve funcionar sem
-precisar mexer em mais nada.
+🟢 **Reescrito em 22/07/2026 — conclusão anterior estava errada.** Uma
+investigação anterior (5 emissões reais com captcha pago) tinha concluído
+que o botão "VISUALIZAR CERTIDÃO GERADA" apontava pra um endpoint
+quebrado no próprio site do TRF4 (testado via clique, `curl` isolado e
+`page.get()` direto — sempre 404/Bad Request). Uma colaboradora reproduziu
+o fluxo manualmente (CPF/data reais) e o botão funcionou perfeitamente,
+baixando a certidão real (nº controle 22284222). Duas explicações
+possíveis, não mutuamente exclusivas: (1) o TRF4 mudou a estrutura do
+site desde a investigação anterior — a página de confirmação real hoje
+mora em `.../certidao/certidaoreg/consultas_certidoes_emitir.php`,
+caminho diferente do antigo `certidao_balcao/certidao_emite_cjf.php` que
+o worker tentava reconstruir; (2) o clique testado antes era via JS
+(`element.click()` dentro de `page.evaluate()`), que não carrega
+`user_gesture=True` no CDP — mesma causa raiz já confirmada e corrigida
+nesse projeto pra Receita Federal e SEFAZ PR. Removida toda a lógica de
+extrair/reconstruir a URL do `onclick`; agora clica de verdade no botão
+via `page.find(...).click()` (clique nativo do nodriver) e deixa o
+próprio JS do site resolver a navegação, exatamente como um humano faz.
 """
 import asyncio
 import json
-import re
-from urllib.parse import urljoin
 
 from certidoes_core.banco import PedidoCertidao, StatusPedido
 from certidoes_core.fila import consumir_fila
@@ -108,23 +100,27 @@ class TrfCertidaoJudicial(AutomacaoNodriverBase):
 
         caminho_certidao = ""
         if status_final in (StatusPedido.SUCESSO_CONFIRMADO, StatusPedido.SUCESSO_PROVAVEL):
-            # Confirmado contra o site real (gasto de captcha real): depois de
-            # emitir, o portal mostra uma tela de CONFIRMAÇÃO com o botão
-            # "VISUALIZAR CERTIDÃO GERADA" (onclick="window.location='../../
-            # certidao_balcao/certidao_emite_cjf.php?...'"). Clicar o botão
-            # direto (deixando o próprio JS do site resolver o caminho
-            # relativo) resultou em "Bad Request" numa tentativa anterior —
-            # em vez de confiar nisso, extraímos a URL do onclick e
-            # resolvemos o caminho relativo nós mesmos (urljoin, com o
-            # page.url exato no momento), navegando direto via page.get().
-            url_certidao = await self._obter_url_visualizar_certidao(page)
-            print(f"[{self.portal}] URL da certidão resolvida: {url_certidao}")
-
-            if url_certidao:
-                await page.get(url_certidao)
+            # 🟢 Reescrito em 22/07 após confirmação real: uma colaboradora
+            # reproduziu o fluxo manualmente e o botão "VISUALIZAR CERTIDÃO
+            # GERADA" funcionou perfeitamente, baixando a certidão real
+            # (nº controle 22284222). A conclusão anterior ("link quebrado
+            # no site do TRF4") estava errada — ou o TRF4 mudou a
+            # estrutura do site desde então (a página de confirmação real
+            # hoje mora em .../certidaoreg/consultas_certidoes_emitir.php,
+            # diferente do caminho antigo certidao_balcao/certidao_emite_cjf.php
+            # que o worker tentava reconstruir), ou o problema sempre foi
+            # um clique não-confiável (via JS) em vez de um clique nativo
+            # de verdade — mesma causa raiz já corrigida hoje na Receita
+            # Federal e no SEFAZ PR. Em vez de extrair/reconstruir a URL
+            # do onclick, agora clicamos de verdade no botão, com
+            # `page.find(...).click()` (carrega `user_gesture=True` no
+            # CDP), deixando o próprio JS do site resolver o caminho.
+            botao = await self._achar_botao_visualizar(page)
+            if botao:
+                await botao.click()
                 await page.wait(3)
 
-            caminho_certidao = await self.aguardar_e_mover_pdf(pedido, pdfs_antes, tentativas=8)
+            caminho_certidao = await self.aguardar_e_mover_pdf(pedido, pdfs_antes, tentativas=10)
             if not caminho_certidao:
                 caminho_certidao = await self.salvar_pagina_como_pdf(page, pedido)
 
@@ -182,34 +178,20 @@ class TrfCertidaoJudicial(AutomacaoNodriverBase):
             }})()
         """)
 
-    async def _obter_url_visualizar_certidao(self, page) -> str:
-        # Confirmado via gasto de captcha real: a tela pós-emissão não é o
-        # documento — é uma confirmação com dois botões ("VISUALIZAR CERTIDÃO
-        # GERADA" e "GERAR NOVA CERTIDÃO"). Procuramos por texto em vez de
-        # id/name (mais resiliente a mudanças de markup). Em vez de clicar e
-        # deixar o `window.location` do próprio site resolver o caminho
-        # relativo (isso gerou "Bad Request" numa tentativa anterior),
-        # extraímos a URL de dentro do onclick e resolvemos nós mesmos.
-        onclick = await page.evaluate("""
-            (() => {
-                const alvo = 'visualizar certid';
-                const candidatos = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"], a, div, span'));
-                const elemento = candidatos.find(el => {
-                    const texto = (el.innerText || el.value || '').trim().toLowerCase();
-                    return texto.includes(alvo);
-                });
-                return elemento ? (elemento.getAttribute('onclick') || '') : '';
-            })()
-        """)
-        if not onclick:
-            return ""
-
-        match = re.search(r"window\.location\s*=\s*'([^']+)'", onclick)
-        if not match:
-            return ""
-
-        caminho_relativo = match.group(1)
-        return urljoin(page.url, caminho_relativo)
+    async def _achar_botao_visualizar(self, page, tentativas: int = 10):
+        # A tela pós-emissão não é o documento — é uma confirmação com dois
+        # botões ("VISUALIZAR CERTIDÃO GERADA" e "GERAR NOVA CERTIDÃO").
+        # Polling porque a navegação até essa tela pode demorar mais que
+        # o wait fixo anterior.
+        for _ in range(tentativas):
+            try:
+                botao = await page.find("VISUALIZAR CERTIDÃO GERADA", best_match=True, timeout=1)
+            except Exception:
+                botao = None
+            if botao:
+                return botao
+            await page.wait(1)
+        return None
 
     async def _interpretar_resultado(self, page) -> dict:
         # O servidor re-renderiza o erro dentro de um span vermelho na

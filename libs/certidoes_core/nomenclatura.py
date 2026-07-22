@@ -51,4 +51,11 @@ def _rotulo_portal(portal: str, tipo: str | None) -> str:
 
 def gerar_nome_certidao(nome_pessoa: str, portal: str, documento: str, extensao: str = "pdf", tipo: str | None = None) -> str:
     rotulo = normalizar_nome_arquivo(_rotulo_portal(portal, tipo))
-    return f"{normalizar_nome_arquivo(nome_pessoa)}_{rotulo}_{documento}.{extensao}"
+    # CNPJ formatado com barra (ex: "37.187.679/0001-80") quebra o caminho
+    # do arquivo — a barra vira separador de pasta, e o worker tenta salvar
+    # num diretório que não existe em vez de um arquivo só (confirmado num
+    # erro real: "No such file or directory" no TRF4 com CNPJ). Pontos e
+    # traço continuam intactos (são válidos em nome de arquivo e já são o
+    # padrão usado neste projeto) — só a barra precisa de substituição.
+    documento_seguro = (documento or "").replace("/", "-")
+    return f"{normalizar_nome_arquivo(nome_pessoa)}_{rotulo}_{documento_seguro}.{extensao}"

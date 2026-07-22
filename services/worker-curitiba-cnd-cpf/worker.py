@@ -79,14 +79,27 @@ class CuritibaCndCpf(AutomacaoNodriverBase):
 
         await self._clicar_gerar_certidao(page)
         await self._tratar_aviso_certidao_existente(page)
-        await page.wait(4)
+        # Mesma correção aplicada no worker de Imóvel (mesma plataforma):
+        # depois de "Gerar Nova Certidão" (quando já existe uma certidão
+        # recente pro mesmo CPF), o site processa a nova certidão de forma
+        # assíncrona — interpretar o resultado cedo demais pega esse
+        # processamento no meio do caminho, às vezes como um "Erro 404"
+        # transitório (a página ainda nem tinha terminado de trocar de
+        # estado), sem ser um bloqueio de verdade.
+        await self._aguardar_processamento_finalizar(page)
+        await page.wait(2)
 
         resultado_bruto = await self._interpretar_resultado(page)
         status_final = self._determinar_status_final(resultado_bruto["status"])
 
         caminho_certidao = ""
         if status_final in (StatusPedido.SUCESSO_CONFIRMADO, StatusPedido.SUCESSO_PROVAVEL):
-            caminho_certidao = await self.aguardar_e_mover_pdf(pedido, pdfs_antes, tentativas=10)
+            # Sem esse clique, nada dispara o download real do site — ele só
+            # mostra a certidão dentro de um modal com um botão "Baixar", não
+            # baixa sozinho (mesmo bug encontrado e corrigido no worker de
+            # Imóvel, mesma plataforma).
+            await self._clicar_baixar_certidao(page)
+            caminho_certidao = await self.aguardar_e_mover_pdf(pedido, pdfs_antes, tentativas=20)
             if not caminho_certidao:
                 caminho_certidao = await self.salvar_pagina_como_pdf(page, pedido)
 
@@ -146,19 +159,48 @@ class CuritibaCndCpf(AutomacaoNodriverBase):
                 return
             await page.wait(1)
 
+    async def _aguardar_processamento_finalizar(self, page, tentativas: int = 15):
+        for _ in range(tentativas):
+            texto = await page.evaluate("(() => document.body.innerText)()")
+            texto_lower = (texto or "").lower()
+            if "aguardando processamento" not in texto_lower:
+                return
+            await page.wait(1)
+
+    async def _clicar_baixar_certidao(self, page):
+        await page.evaluate("""
+            (() => {
+                const elementos = Array.from(document.querySelectorAll('button, a'));
+                const botao = elementos.find(el => (el.innerText || '').trim() === 'Baixar');
+                if (botao) { botao.click(); return true; }
+                return false;
+            })()
+        """)
+
     async def _interpretar_resultado(self, page) -> dict:
         texto = await page.evaluate("(() => document.body.innerText)()")
         texto = texto.strip() if isinstance(texto, str) else ""
         texto_lower = texto.lower()
 
         if "erro 404" in texto_lower or "não pode ser encontrado" in texto_lower:
-            return {"status": "erro_tecnico", "mensagem": "Erro técnico do próprio portal (404) após o envio — ver evidência."}
+            return {
+                "status": "erro_tecnico",
+                "mensagem": "Erro técnico do próprio portal (404) após o envio — confirmado que acontece ao clicar "
+                             "\"Gerar Nova Certidão\" pro mesmo CPF testado poucos minutos antes; provável limite de "
+                             "repetição do próprio site, não bloqueio permanente. Ver evidência.",
+            }
         # Confirmado contra o site real: o texto exato da certidão negativa
         # é "certificamos não existir pendências em nome do contribuinte".
         if "não existir pendênc" in texto_lower or "certidão negativa" in texto_lower:
             return {"status": "certidao_emitida", "mensagem": "Certidão negativa gerada."}
         if "existir pendênc" in texto_lower or "certidão positiva" in texto_lower:
             return {"status": "certidao_emitida", "mensagem": "Certidão positiva gerada (há pendências)."}
+        # Mesmo caso do worker de Imóvel: quando já existia certidão e
+        # "Gerar Nova Certidão" é clicado, o conteúdo real fica dentro de
+        # um visualizador de PDF interno, ilegível via innerText — só o
+        # conjunto de botões (Imprimir/Baixar) denuncia que deu certo.
+        if "imprimir" in texto_lower and "baixar" in texto_lower:
+            return {"status": "certidao_emitida", "mensagem": "Certidão gerada (positiva ou negativa — conteúdo real está no PDF baixado)."}
         if "cpf" in texto_lower and "inválid" in texto_lower:
             return {"status": "erro_portal", "mensagem": "CPF rejeitado pelo portal como inválido."}
         # Confirmado num teste real: às vezes o portal fica preso em
