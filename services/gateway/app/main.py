@@ -52,6 +52,7 @@ PORTAIS_DISPONIVEIS = {
     "curitiba_certidao_tributos_imovel": "Certidão de Tributos Municipais - Imóvel - Prefeitura de Curitiba",
     "trt9_certidao_trabalhista": "Certidão Trabalhista - PJe TRT9",
     "mpt_certidao_negativa": "Certidão Negativa de Feitos - Ministério Público do Trabalho",
+    "curitiba_guia_amarela": "Guia Amarela - Consulta Informativa de Lote - Prefeitura de Curitiba",
     # próximos portais entram aqui conforme forem sendo automatizados
     # (lembre de adicionar também em GRUPO_DOCUMENTO_POR_PORTAL, abaixo)
 }
@@ -79,6 +80,7 @@ GRUPO_DOCUMENTO_POR_PORTAL = {
     "curitiba_certidao_cadastro_imovel": GRUPO_IMOVEL,
     "curitiba_consulta_debitos_divida_ativa": GRUPO_IMOVEL,
     "curitiba_certidao_tributos_imovel": GRUPO_IMOVEL,
+    "curitiba_guia_amarela": GRUPO_IMOVEL,
 }
 
 
@@ -119,6 +121,7 @@ CAMINHO_DADOS_POR_PORTAL = {
     "curitiba_certidao_tributos_imovel": "/dados-workers/curitiba_certidao_tributos_imovel",
     "trt9_certidao_trabalhista": "/dados-workers/trt9_certidao_trabalhista",
     "mpt_certidao_negativa": "/dados-workers/mpt_certidao_negativa",
+    "curitiba_guia_amarela": "/dados-workers/curitiba_guia_amarela",
 }
 
 

@@ -29,8 +29,11 @@ class ResolvedorCaptcha(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def resolver_captcha_imagem(self, imagem_base64: str) -> str:
-        """Pra captchas simples de texto/imagem (ex: alguns Atende.Net)."""
+    async def resolver_captcha_imagem(self, imagem_base64: str, **hints) -> str:
+        """Pra captchas simples de texto/imagem (ex: alguns Atende.Net).
+        `**hints` repassa parâmetros opcionais do 2captcha (ex: `numeric`,
+        `minLen`, `maxLen`, `caseSensitive`) pra portais cujo formato de
+        captcha é conhecido de antemão, melhorando a taxa de acerto."""
         raise NotImplementedError
 
     @abstractmethod

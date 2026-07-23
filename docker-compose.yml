@@ -76,6 +76,7 @@ services:
       - worker_curitiba_tributos_imovel_data:/dados-workers/curitiba_certidao_tributos_imovel:ro
       - worker_trt9_certidao_data:/dados-workers/trt9_certidao_trabalhista:ro
       - worker_mpt_certidao_data:/dados-workers/mpt_certidao_negativa:ro
+      - worker_curitiba_guia_amarela_data:/dados-workers/curitiba_guia_amarela:ro
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -409,6 +410,28 @@ services:
     deploy:
       replicas: 1
 
+  worker-curitiba-guia-amarela:
+    build:
+      context: .
+      dockerfile: services/worker-curitiba-guia-amarela/Dockerfile
+    restart: unless-stopped
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
+      BROWSER_HEADLESS: "true"
+      BROWSER_DOWNLOAD_DIR: /data/downloads
+      STORAGE_LOCAL_PATH: /data/evidencias
+      TWOCAPTCHA_API_KEY: ${TWOCAPTCHA_API_KEY}
+    volumes:
+      - worker_curitiba_guia_amarela_data:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+
 volumes:
   mysql_data:
   rabbitmq_data:
@@ -427,3 +450,4 @@ volumes:
   worker_curitiba_tributos_imovel_data:
   worker_trt9_certidao_data:
   worker_mpt_certidao_data:
+  worker_curitiba_guia_amarela_data:

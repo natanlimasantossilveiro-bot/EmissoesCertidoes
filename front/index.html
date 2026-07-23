@@ -641,6 +641,7 @@ const GRUPO_DOCUMENTO_POR_PORTAL = {
   curitiba_certidao_cadastro_imovel: "imovel",
   curitiba_consulta_debitos_divida_ativa: "imovel",
   curitiba_certidao_tributos_imovel: "imovel",
+  curitiba_guia_amarela: "imovel",
 };
 const TITULO_GRUPO = { cpf_cnpj: "CPF / CNPJ", imovel: "Indicação Fiscal (imóvel)" };
 
@@ -772,6 +773,7 @@ const STATUS_PORTAL = {
   trt9_certidao_trabalhista: { nivel: "ok", texto: "✅ Validado de ponta a ponta (captcha de imagem via 2captcha)" },
   mpt_certidao_negativa: { nivel: "parcial", texto: "🟡 2captcha raramente consegue resolver o captcha desse portal (reCAPTCHA Enterprise)" },
   curitiba_certidao_tributos_imovel: { nivel: "ok", texto: "✅ Validado de ponta a ponta (captcha Altcha, sem custo) — certidão positiva real emitida, PDF oficial com QR code" },
+  curitiba_guia_amarela: { nivel: "ok", texto: "✅ Validado de ponta a ponta (captcha de imagem via 2captcha) — Consulta Informativa do Lote real emitida, PDF oficial completo (6 páginas)" },
 };
 
 function renderizarListaPortais(containerId, portais) {

@@ -227,7 +227,13 @@ class AutomacaoNodriverBase(AutomacaoPortal):
     # ---------- helpers de download, comuns a qualquer portal via nodriver ----------
 
     def _listar_pdfs_downloads(self) -> set:
-        return set(config.BROWSER_DOWNLOAD_DIR.glob("*.pdf"))
+        # glob() é case-sensitive no Linux — um site que sirva o arquivo
+        # com extensão maiúscula (".PDF", confirmado num teste real contra
+        # o Guia Amarela de Curitiba) nunca aparecia aqui, fazendo o
+        # arquivo baixado de verdade ficar esquecido em BROWSER_DOWNLOAD_DIR
+        # e o worker cair sempre no fallback de print da página em vez de
+        # mover o PDF real.
+        return set(config.BROWSER_DOWNLOAD_DIR.glob("*.pdf")) | set(config.BROWSER_DOWNLOAD_DIR.glob("*.PDF"))
 
     @staticmethod
     async def digitar_devagar(elemento, texto: str, atraso_segundos: float = 0.12):

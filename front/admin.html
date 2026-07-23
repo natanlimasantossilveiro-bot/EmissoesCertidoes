@@ -187,7 +187,7 @@ el("btnSair").addEventListener("click", fazerLogout);
 async function fetchAutenticado(url, opcoes = {}) {
   const resp = await fetch(url, {
     ...opcoes,
-    headers: { ...(opcoes.headers || {}), "Authorization": `Bearer ${token()}` },
+    headers: { ...(opcoes.headers || {}), "Authorization": `Bearer ${token()}`, "ngrok-skip-browser-warning": "true" },
   });
   if (resp.status === 401 || resp.status === 403) {
     // Sem token, token expirado, ou não é admin — nenhum dos casos tem

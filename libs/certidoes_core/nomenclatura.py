@@ -31,6 +31,7 @@ NOME_PASTA_POR_PORTAL = {
     "atendenet_pinhais_cnd": "Tributo Municipal Pinhais",
     "mpf_certidao_negativa": "Certidão MPF",
     "fgts_caixa": "Certidão FGTS",
+    "curitiba_guia_amarela": "Guia Amarela",
 }
 
 # O TRF4 tem um rótulo diferente por tipo de certidão (mesmo portal) —
