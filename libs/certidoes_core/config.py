@@ -35,5 +35,11 @@ class Config:
     # Retry / resiliência
     MAX_TENTATIVAS: int = int(os.getenv("MAX_TENTATIVAS", "3"))
 
+    # Limpeza automática (serviço cleanup-evidencias) — prazo em horas antes
+    # de considerar um arquivo "antigo". Certidão só é apagada de fato se
+    # upload_confirmado estiver True no pedido (ver limpeza_certidoes.py).
+    RETENCAO_EVIDENCIAS_HORAS: int = int(os.getenv("RETENCAO_EVIDENCIAS_HORAS", "72"))
+    RETENCAO_CERTIDOES_HORAS: int = int(os.getenv("RETENCAO_CERTIDOES_HORAS", "72"))
+
 
 config = Config()

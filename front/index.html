@@ -636,6 +636,7 @@ const GRUPO_DOCUMENTO_POR_PORTAL = {
   fgts_caixa: "cpf_cnpj",
   mpf_certidao_negativa: "cpf_cnpj",
   curitiba_cnd_cpf: "cpf_cnpj",
+  curitiba_cnd_cnpj: "cpf_cnpj",
   trt9_certidao_trabalhista: "cpf_cnpj",
   mpt_certidao_negativa: "cpf_cnpj",
   curitiba_certidao_cadastro_imovel: "imovel",
@@ -656,6 +657,7 @@ const TITULO_GRUPO = { cpf_cnpj: "CPF / CNPJ", imovel: "Indicação Fiscal (imó
 // precisa adicionar toda vez que um portal aceitar os dois tipos.
 const TIPO_DOCUMENTO_RESTRITO_POR_PORTAL = {
   curitiba_cnd_cpf: "pf",
+  curitiba_cnd_cnpj: "pj",
 };
 
 // Dentro do grupo Imóvel, esse portal específico pede um SEGUNDO
@@ -774,6 +776,7 @@ const STATUS_PORTAL = {
   mpt_certidao_negativa: { nivel: "parcial", texto: "🟡 2captcha raramente consegue resolver o captcha desse portal (reCAPTCHA Enterprise)" },
   curitiba_certidao_tributos_imovel: { nivel: "ok", texto: "✅ Validado de ponta a ponta (captcha Altcha, sem custo) — certidão positiva real emitida, PDF oficial com QR code" },
   curitiba_guia_amarela: { nivel: "ok", texto: "✅ Validado de ponta a ponta (captcha de imagem via 2captcha) — Consulta Informativa do Lote real emitida, PDF oficial completo (6 páginas)" },
+  curitiba_cnd_cnpj: { nivel: "ok", texto: "✅ Validado de ponta a ponta (captcha Altcha, sem custo) — certidão negativa real emitida com o CNPJ do próprio escritório, QR code de autenticidade" },
 };
 
 function renderizarListaPortais(containerId, portais) {

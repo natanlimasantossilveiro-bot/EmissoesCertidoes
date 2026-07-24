@@ -114,12 +114,18 @@ class CuritibaCertidaoTributosImovel(AutomacaoNodriverBase):
             # visualizador com botão "Baixar"; numa geração nova o próprio
             # site dispara o download sozinho, esse clique só não acha nada.
             await self._clicar_baixar_certidao(page)
+            # Mesmo bug real confirmado no worker de CNPJ (mesma
+            # plataforma): clicar "Baixar" pode reabrir o spinner
+            # "Aguardando processamento ..." — sem esperar terminar, o
+            # fallback de screenshot capturava o spinner em vez da certidão.
+            await self._aguardar_processamento_finalizar(page)
             # Janela maior de espera (20s): o download real só começa depois
             # do processamento assíncrono do servidor, confirmado mais lento
             # que os 10s usados originalmente (a mesma janela que funciona
             # bem pros outros portais de Curitiba).
             caminho_certidao = await self.aguardar_e_mover_pdf(pedido, pdfs_antes, tentativas=20)
             if not caminho_certidao:
+                await self._aguardar_processamento_finalizar(page)
                 caminho_certidao = await self.salvar_pagina_como_pdf(page, pedido)
 
         return ResultadoEmissao(

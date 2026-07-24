@@ -80,6 +80,12 @@ class PedidoCertidao(Base):
     caminho_certidao = Column(String(512), nullable=True)   # PDF final, se houver
     url_evidencia = Column(String(512), nullable=True)      # screenshot de erro/sucesso
 
+    # Nenhum fluxo do sistema ainda envia a certidão pra nuvem do escritório
+    # nem seta isso como True — existe só pra limpeza automática de
+    # certidões (limpeza_certidoes.py) nunca apagar um PDF que ainda não
+    # foi confirmado como copiado pra fora do volume local do worker.
+    upload_confirmado = Column(Boolean, default=False, nullable=False)
+
     criado_em = Column(DateTime, default=datetime.utcnow)
     atualizado_em = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

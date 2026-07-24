@@ -1,48 +1,23 @@
 """
-Worker do portal Certidão de Tributos Municipais — Pessoa Física (CND),
+Worker do portal Certidão de Tributos Municipais — Pessoa Jurídica (CND),
 Prefeitura de Curitiba. Reaproveita AutomacaoNodriverBase.
 
-Antes bloqueado pelo Akamai Bot Manager (domínio inteiro, "Access Denied")
-rodando do ambiente de datacenter/cloud — retestado em 15/07/2026 a partir
-da rede real do escritório com o mesmo `--user-agent` corrigido já usado
-no FGTS/MPF, e abriu limpo (ver `docs/CATALOGO_PORTAIS.md`).
+Mesma plataforma (mesmo domínio `cnd-cidadao.curitiba.pr.gov.br`), mesmo
+captcha (Altcha) e essencialmente o mesmo HTML/JS do worker
+`curitiba_cnd_cpf` — confirmado por inspeção ao vivo via nodriver (sem
+gastar nenhum captcha, só carregando a página): mesmo formulário
+`#frmCadastro`, mesmo botão `#btnSolicitar`, mesmo widget Altcha, mesmo
+diálogo "Já existe certidão Emitida para este CNPJ." e mesma mensagem de
+sucesso "Certidão gerada. Verifique o arquivo PDF criado na sua pasta de
+download." — só troca o campo (`#DocumentoCnpj`, `maxlength=18` por causa
+da máscara com pontuação, mas só dígitos são enviados) e a URL
+(`/Certidao/SolicitarCnpj` em vez de `/Certidao/SolicitarCpf`).
 
-Mecânica confirmada por inspeção ao vivo (nodriver, sem gastar 2captcha —
-esse portal não usa 2captcha nenhum, ver abaixo):
-
-- Sistema clássico ASP.NET MVC + jQuery (não é SPA) — formulário
-  `#frmCadastro`, campo `#DocumentoCpf` (texto, só dígitos, `maxlength=14`).
-- **Captcha: Altcha, não 2captcha.** É um captcha de prova computacional
-  (proof-of-work) — o widget (`<altcha-widget>`) resolve sozinho no
-  navegador assim que o checkbox "Não sou um robô" é clicado, sem
-  precisar de nenhum serviço de resolução externo. Confirmado ao vivo:
-  clicar o checkbox (`#altcha-container input[type="checkbox"]`) muda o
-  atributo `data-state` do widget de "unverified" pra "verified" em
-  menos de 1 segundo, populando sozinho um campo hidden com o payload
-  assinado (challenge/signature). Widget tem `auto="off"`, por isso
-  precisa do clique — não resolve sozinho sem interação nenhuma.
-- Botão de envio: `#btnSolicitar` (um `<a>` estilizado como botão, não
-  um `<button>`/`<input type=submit>` de verdade — clicar via JS
-  `.click()` aciona o handler jQuery do site normalmente).
-
-⚠️ **Bug real encontrado no primeiro teste real**: preencher o campo
-`#DocumentoCpf` com `Element.send_keys()` (teclas via CDP, sem pausa
-entre uma e outra) saiu com os dígitos fora de ordem — o campo tem uma
-máscara de formatação em JS que não consegue acompanhar teclas
-disparadas rápido demais uma atrás da outra (confirmado comparando o
-valor final no print de evidência: "081.152.924-93" em vez de
-"081.315.299-24"). Corrigido com `digitar_devagar()` (novo, em
-`AutomacaoNodriverBase`), que espaça cada tecla.
-
-⚠️ **Bug real encontrado testando pelo painel de verdade**: se já existe
-uma certidão emitida recentemente pro mesmo CPF, o site mostra um
-diálogo "Aviso — Já existe certidão Emitida para este CPF." com dois
-botões ("Visualizar" / "Gerar Nova Certidão") **em vez de** gerar a
-certidão direto — sem tratar isso, o worker ficava parado nesse
-diálogo e a captura de PDF pegava só a tela do aviso, não a certidão.
-Corrigido clicando "Gerar Nova Certidão" automaticamente quando esse
-diálogo aparece (`_tratar_aviso_certidao_existente`), garantindo uma
-via nova a cada pedido em vez de reaproveitar a anterior.
+Como é a mesma plataforma, todos os bugs já corrigidos no worker de CPF
+(digitação com `digitar_devagar`, diálogo de certidão já existente,
+processamento assíncrono depois de "Gerar Nova Certidão", clique real no
+botão "Baixar" pra pegar o PDF de verdade em vez do fallback) já vêm
+aplicados aqui desde o início, sem precisar redescobrir nada.
 """
 import asyncio
 import re
@@ -58,18 +33,18 @@ UA_CHROME_REAL = (
 )
 
 
-class CuritibaCndCpf(AutomacaoNodriverBase):
-    portal = "curitiba_cnd_cpf"
-    url_inicial = "https://cnd-cidadao.curitiba.pr.gov.br/Certidao/SolicitarCpf"
+class CuritibaCndCnpj(AutomacaoNodriverBase):
+    portal = "curitiba_cnd_cnpj"
+    url_inicial = "https://cnd-cidadao.curitiba.pr.gov.br/Certidao/SolicitarCnpj"
     espera_inicial_segundos = 4
-    # Mesmo ajuste do FGTS/MPF: o Akamai bloqueava o Chromium headless
-    # pelo User-Agent, não por IP — ver aviso no topo do arquivo.
+    # Mesmo ajuste do worker de CPF/FGTS/MPF: o Akamai bloqueia o Chromium
+    # headless pelo User-Agent, não por IP.
     browser_args_extra = [f"--user-agent={UA_CHROME_REAL}"]
 
     async def preencher_e_emitir(self, page, pedido: PedidoCertidao) -> ResultadoEmissao:
         pdfs_antes = self._listar_pdfs_downloads()
 
-        campo = await page.select("#DocumentoCpf")
+        campo = await page.select("#DocumentoCnpj")
         digitos = re.sub(r"\D", "", pedido.documento or "")
         await self.digitar_devagar(campo, digitos)
         await page.wait(1)
@@ -79,13 +54,10 @@ class CuritibaCndCpf(AutomacaoNodriverBase):
 
         await self._clicar_gerar_certidao(page)
         await self._tratar_aviso_certidao_existente(page)
-        # Mesma correção aplicada no worker de Imóvel (mesma plataforma):
-        # depois de "Gerar Nova Certidão" (quando já existe uma certidão
-        # recente pro mesmo CPF), o site processa a nova certidão de forma
-        # assíncrona — interpretar o resultado cedo demais pega esse
-        # processamento no meio do caminho, às vezes como um "Erro 404"
-        # transitório (a página ainda nem tinha terminado de trocar de
-        # estado), sem ser um bloqueio de verdade.
+        # Mesma correção do worker de CPF/Imóvel (mesma plataforma): depois
+        # de "Gerar Nova Certidão", o site processa de forma assíncrona —
+        # interpretar cedo demais pega esse processamento no meio do
+        # caminho, às vezes como um "Erro 404" transitório.
         await self._aguardar_processamento_finalizar(page)
         await page.wait(2)
 
@@ -95,14 +67,15 @@ class CuritibaCndCpf(AutomacaoNodriverBase):
         caminho_certidao = ""
         if status_final in (StatusPedido.SUCESSO_CONFIRMADO, StatusPedido.SUCESSO_PROVAVEL):
             # Sem esse clique, nada dispara o download real do site — ele só
-            # mostra a certidão dentro de um modal com um botão "Baixar", não
-            # baixa sozinho (mesmo bug encontrado e corrigido no worker de
-            # Imóvel, mesma plataforma).
+            # mostra a certidão dentro de um modal com um botão "Baixar",
+            # não baixa sozinho (mesmo bug já corrigido no worker de CPF).
             await self._clicar_baixar_certidao(page)
-            # Mesmo bug real confirmado no worker de CNPJ (mesma
-            # plataforma): clicar "Baixar" pode reabrir o spinner
-            # "Aguardando processamento ..." — sem esperar terminar, o
-            # fallback de screenshot capturava o spinner em vez da certidão.
+            # Bug real confirmado (PDF de evidência do usuário): clicar
+            # "Baixar" pode reabrir o mesmo spinner "Aguardando
+            # processamento ..." (o servidor prepara o arquivo de novo antes
+            # de servir) — sem esperar isso terminar, o fallback de
+            # screenshot capturava o spinner no meio do caminho em vez da
+            # certidão pronta.
             await self._aguardar_processamento_finalizar(page)
             caminho_certidao = await self.aguardar_e_mover_pdf(pedido, pdfs_antes, tentativas=20)
             if not caminho_certidao:
@@ -142,15 +115,12 @@ class CuritibaCndCpf(AutomacaoNodriverBase):
         """)
 
     async def _tratar_aviso_certidao_existente(self, page, tentativas: int = 8):
-        # Se já existe uma certidão emitida recentemente pro mesmo CPF,
-        # o site mostra um diálogo "Já existe certidão Emitida para este
-        # CPF" com botões "Visualizar"/"Gerar Nova Certidão" em vez de
+        # Se já existe uma certidão emitida recentemente pro mesmo CNPJ, o
+        # site mostra um diálogo "Já existe certidão Emitida para este
+        # CNPJ" com botões "Visualizar"/"Gerar Nova Certidão" em vez de
         # gerar direto. Clica "Gerar Nova Certidão" pra sempre conseguir
-        # uma via nova, em vez de ficar parado nesse diálogo.
-        # ⚠️ Bug real: uma checagem única (sem repetir) perdia o diálogo
-        # quando ele demorava mais que o esperado pra aparecer — a
-        # interpretação seguinte acabava lendo o texto do próprio
-        # diálogo em vez do resultado. Corrigido com polling.
+        # uma via nova. Polling porque o diálogo pode demorar mais que o
+        # esperado pra aparecer (mesmo bug já visto no worker de CPF).
         for _ in range(tentativas):
             clicou = await page.evaluate("""
                 (() => {
@@ -191,30 +161,21 @@ class CuritibaCndCpf(AutomacaoNodriverBase):
         if "erro 404" in texto_lower or "não pode ser encontrado" in texto_lower:
             return {
                 "status": "erro_tecnico",
-                "mensagem": "Erro técnico do próprio portal (404) após o envio — confirmado que acontece ao clicar "
-                             "\"Gerar Nova Certidão\" pro mesmo CPF testado poucos minutos antes; provável limite de "
-                             "repetição do próprio site, não bloqueio permanente. Ver evidência.",
+                "mensagem": "Erro técnico do próprio portal (404) após o envio — provável limite de repetição "
+                             "pro mesmo CNPJ testado poucos minutos antes, não bloqueio permanente. Ver evidência.",
             }
-        # Confirmado contra o site real: o texto exato da certidão negativa
-        # é "certificamos não existir pendências em nome do contribuinte".
         if "não existir pendênc" in texto_lower or "certidão negativa" in texto_lower:
             return {"status": "certidao_emitida", "mensagem": "Certidão negativa gerada."}
         if "existir pendênc" in texto_lower or "certidão positiva" in texto_lower:
             return {"status": "certidao_emitida", "mensagem": "Certidão positiva gerada (há pendências)."}
-        # Mesmo caso do worker de Imóvel: quando já existia certidão e
+        # Mesmo caso do worker de CPF/Imóvel: quando já existia certidão e
         # "Gerar Nova Certidão" é clicado, o conteúdo real fica dentro de
         # um visualizador de PDF interno, ilegível via innerText — só o
         # conjunto de botões (Imprimir/Baixar) denuncia que deu certo.
         if "imprimir" in texto_lower and "baixar" in texto_lower:
             return {"status": "certidao_emitida", "mensagem": "Certidão gerada (positiva ou negativa — conteúdo real está no PDF baixado)."}
-        if "cpf" in texto_lower and "inválid" in texto_lower:
-            return {"status": "erro_portal", "mensagem": "CPF rejeitado pelo portal como inválido."}
-        # Confirmado num teste real: às vezes o portal fica preso em
-        # "Aguardando processamento..." indefinidamente sem erro nem
-        # resultado — suspeita de limite de repetição pro mesmo CPF
-        # testado várias vezes seguidas. Mensagem própria pra facilitar
-        # o diagnóstico, em vez de aparecer como "resultado não
-        # identificado" genérico.
+        if "cnpj" in texto_lower and "inválid" in texto_lower:
+            return {"status": "erro_portal", "mensagem": "CNPJ rejeitado pelo portal como inválido."}
         if "aguardando processamento" in texto_lower:
             return {
                 "status": "erro_tecnico",
@@ -234,5 +195,5 @@ class CuritibaCndCpf(AutomacaoNodriverBase):
 
 
 if __name__ == "__main__":
-    automacao = CuritibaCndCpf()
+    automacao = CuritibaCndCnpj()
     asyncio.run(consumir_fila(automacao.portal, automacao.processar_pedido, prefetch=1))

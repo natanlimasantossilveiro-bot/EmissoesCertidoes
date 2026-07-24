@@ -77,9 +77,50 @@ services:
       - worker_trt9_certidao_data:/dados-workers/trt9_certidao_trabalhista:ro
       - worker_mpt_certidao_data:/dados-workers/mpt_certidao_negativa:ro
       - worker_curitiba_guia_amarela_data:/dados-workers/curitiba_guia_amarela:ro
+      - worker_curitiba_cnd_cnpj_data:/dados-workers/curitiba_cnd_cnpj:ro
     depends_on:
       rabbitmq:
         condition: service_healthy
+      mysql:
+        condition: service_healthy
+
+  # Serviço dedicado só pra apagar evidência/certidão antiga (ver
+  # libs/certidoes_core/limpeza_evidencias.py e limpeza_certidoes.py).
+  # Separado do Gateway de propósito: o Gateway é somente-leitura nesses
+  # volumes por design (ver comentário acima) — só este serviço tem
+  # permissão de escrita pra apagar arquivo.
+  cleanup-evidencias:
+    build:
+      context: .
+      dockerfile: services/cleanup-evidencias/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
+      RETENCAO_EVIDENCIAS_HORAS: "72"
+      RETENCAO_CERTIDOES_HORAS: "72"
+    volumes:
+      # Mesmos volumes dos workers, montados em leitura-escrita (sem :ro)
+      # sob /evidencias-workers/<portal> — cada um tem subpastas
+      # "evidencias/" e "certidoes_emitidas/" dentro (ver PASTA_CERTIDOES_
+      # EMITIDAS/STORAGE_LOCAL_PATH em nodriver_base.py/config.py).
+      - C:/data:/evidencias-workers/receita_federal
+      - worker_cpf_data:/evidencias-workers/cpf_situacao_cadastral
+      - worker_cnpj_qsa_data:/evidencias-workers/cnpj_qsa
+      - worker_tst_cndt_data:/evidencias-workers/tst_cndt
+      - worker_trf4_data:/evidencias-workers/trf4_certidao_civel_criminal
+      - worker_curitiba_imovel_data:/evidencias-workers/curitiba_certidao_cadastro_imovel
+      - worker_curitiba_debitos_data:/evidencias-workers/curitiba_consulta_debitos_divida_ativa
+      - C:/data:/evidencias-workers/sefaz_pr_certidao_debitos
+      - C:/data:/evidencias-workers/atendenet_pinhais_cnd
+      - worker_fgts_caixa_data:/evidencias-workers/fgts_caixa
+      - worker_mpf_certidao_data:/evidencias-workers/mpf_certidao_negativa
+      - worker_curitiba_cnd_cpf_data:/evidencias-workers/curitiba_cnd_cpf
+      - worker_curitiba_tributos_imovel_data:/evidencias-workers/curitiba_certidao_tributos_imovel
+      - worker_trt9_certidao_data:/evidencias-workers/trt9_certidao_trabalhista
+      - worker_mpt_certidao_data:/evidencias-workers/mpt_certidao_negativa
+      - worker_curitiba_guia_amarela_data:/evidencias-workers/curitiba_guia_amarela
+      - worker_curitiba_cnd_cnpj_data:/evidencias-workers/curitiba_cnd_cnpj
+    depends_on:
       mysql:
         condition: service_healthy
 
@@ -432,6 +473,28 @@ services:
     deploy:
       replicas: 1
 
+  worker-curitiba-cnd-cnpj:
+    build:
+      context: .
+      dockerfile: services/worker-curitiba-cnd-cnpj/Dockerfile
+    restart: unless-stopped
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
+      BROWSER_HEADLESS: "true"
+      BROWSER_DOWNLOAD_DIR: /data/downloads
+      STORAGE_LOCAL_PATH: /data/evidencias
+      TWOCAPTCHA_API_KEY: ${TWOCAPTCHA_API_KEY}
+    volumes:
+      - worker_curitiba_cnd_cnpj_data:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+
 volumes:
   mysql_data:
   rabbitmq_data:
@@ -451,3 +514,4 @@ volumes:
   worker_trt9_certidao_data:
   worker_mpt_certidao_data:
   worker_curitiba_guia_amarela_data:
+  worker_curitiba_cnd_cnpj_data:

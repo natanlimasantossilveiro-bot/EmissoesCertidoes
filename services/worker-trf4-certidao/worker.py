@@ -120,9 +120,27 @@ class TrfCertidaoJudicial(AutomacaoNodriverBase):
                 await botao.click()
                 await page.wait(3)
 
-            caminho_certidao = await self.aguardar_e_mover_pdf(pedido, pdfs_antes, tentativas=10)
-            if not caminho_certidao:
-                caminho_certidao = await self.salvar_pagina_como_pdf(page, pedido)
+            # ⚠️ Bug real encontrado em teste real (repetido em pedidos
+            # diferentes, mesmo com o clique nativo): esse clique às vezes
+            # retorna um "Bad Request" (erro genérico do Apache) em vez do
+            # PDF — de forma intermitente, não sempre. Sem essa checagem,
+            # o pedido ficava marcado SUCESSO_CONFIRMADO mesmo capturando
+            # essa página de erro como se fosse a certidão (o status já
+            # tinha sido decidido antes, só com base em ter saído do
+            # formulário inicial — não confirma que o PDF final saiu
+            # certo). Rebaixa pra ERRO_TECNICO nesse caso, disponível pra
+            # nova tentativa automática pela fila.
+            texto_pos_clique = await page.evaluate("document.body.innerText")
+            if isinstance(texto_pos_clique, str) and "bad request" in texto_pos_clique.lower():
+                status_final = StatusPedido.ERRO_TECNICO
+                resultado_bruto["mensagem"] = (
+                    "O clique em \"Visualizar Certidão Gerada\" retornou um erro do próprio "
+                    "servidor do TRF4 (Bad Request) — intermitente, disponível para nova tentativa."
+                )
+            else:
+                caminho_certidao = await self.aguardar_e_mover_pdf(pedido, pdfs_antes, tentativas=10)
+                if not caminho_certidao:
+                    caminho_certidao = await self.salvar_pagina_como_pdf(page, pedido)
 
         return ResultadoEmissao(
             status=status_final,
