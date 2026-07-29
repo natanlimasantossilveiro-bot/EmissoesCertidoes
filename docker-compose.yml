@@ -53,23 +53,30 @@ services:
       # arquivos pro front. Só leitura: o Gateway nunca escreve aqui.
       # receita_federal e sefaz_pr_certidao_debitos rodam nativos no Windows
       # (fora do Docker) por bloqueio de automação em Linux/headless — ver
-      # workers_nativos/. Por isso, ao contrário dos outros portais, essas
-      # duas linhas não apontam pro volume Docker de cada worker (que fica
-      # parado, sem receber nada) e sim direto pra pasta real do Windows
-      # onde o worker nativo grava os arquivos (`C:\data`, ambos os
-      # portais gravam na mesma raiz — sem colisão, os nomes de arquivo já
-      # incluem o portal).
-      - C:/data:/dados-workers/receita_federal:ro
+      # workers_nativos/. Isso só é verdade rodando localmente no Windows
+      # do desenvolvedor: num servidor Linux (VPS) não existe processo
+      # nativo possível, então esses 3 portais rodam como container normal
+      # (worker-receita-federal/worker-sefaz-pr/worker-atendenet-pinhais,
+      # mais abaixo), cada um gravando no próprio volume Docker nomeado —
+      # igual todos os outros portais. As 3 variáveis abaixo (com default
+      # pro caminho do Windows local) existem só pra essa diferença entre
+      # ambiente de dev e produção; configure-as no .env do VPS como
+      # RECEITA_FEDERAL_DADOS_VOLUME=worker_rf_data,
+      # SEFAZ_PR_DADOS_VOLUME=worker_sefaz_pr_data e
+      # ATENDENET_PINHAIS_DADOS_VOLUME=worker_atendenet_pinhais_data
+      # (⚠️ NÃO usar `sed` pra trocar "C:/data" por "/data" — isso aponta
+      # pra uma pasta vazia sem relação com o volume real do worker).
+      - ${RECEITA_FEDERAL_DADOS_VOLUME:-C:/data}:/dados-workers/receita_federal:ro
       - worker_cpf_data:/dados-workers/cpf_situacao_cadastral:ro
       - worker_cnpj_qsa_data:/dados-workers/cnpj_qsa:ro
       - worker_tst_cndt_data:/dados-workers/tst_cndt:ro
       - worker_trf4_data:/dados-workers/trf4_certidao_civel_criminal:ro
       - worker_curitiba_imovel_data:/dados-workers/curitiba_certidao_cadastro_imovel:ro
       - worker_curitiba_debitos_data:/dados-workers/curitiba_consulta_debitos_divida_ativa:ro
-      - C:/data:/dados-workers/sefaz_pr_certidao_debitos:ro
+      - ${SEFAZ_PR_DADOS_VOLUME:-C:/data}:/dados-workers/sefaz_pr_certidao_debitos:ro
       # atendenet_pinhais_cnd também roda nativo no Windows agora, mesmo
       # motivo do receita_federal/sefaz_pr_certidao_debitos acima.
-      - C:/data:/dados-workers/atendenet_pinhais_cnd:ro
+      - ${ATENDENET_PINHAIS_DADOS_VOLUME:-C:/data}:/dados-workers/atendenet_pinhais_cnd:ro
       - worker_fgts_caixa_data:/dados-workers/fgts_caixa:ro
       - worker_mpf_certidao_data:/dados-workers/mpf_certidao_negativa:ro
       - worker_curitiba_cnd_cpf_data:/dados-workers/curitiba_cnd_cpf:ro
@@ -103,15 +110,18 @@ services:
       # sob /evidencias-workers/<portal> — cada um tem subpastas
       # "evidencias/" e "certidoes_emitidas/" dentro (ver PASTA_CERTIDOES_
       # EMITIDAS/STORAGE_LOCAL_PATH em nodriver_base.py/config.py).
-      - C:/data:/evidencias-workers/receita_federal
+      # Mesma ressalva do bloco do Gateway acima sobre as 3 variáveis com
+      # default pro Windows local (RECEITA_FEDERAL_DADOS_VOLUME etc.) — no
+      # VPS configure-as no .env pra apontar pro volume Docker de verdade.
+      - ${RECEITA_FEDERAL_DADOS_VOLUME:-C:/data}:/evidencias-workers/receita_federal
       - worker_cpf_data:/evidencias-workers/cpf_situacao_cadastral
       - worker_cnpj_qsa_data:/evidencias-workers/cnpj_qsa
       - worker_tst_cndt_data:/evidencias-workers/tst_cndt
       - worker_trf4_data:/evidencias-workers/trf4_certidao_civel_criminal
       - worker_curitiba_imovel_data:/evidencias-workers/curitiba_certidao_cadastro_imovel
       - worker_curitiba_debitos_data:/evidencias-workers/curitiba_consulta_debitos_divida_ativa
-      - C:/data:/evidencias-workers/sefaz_pr_certidao_debitos
-      - C:/data:/evidencias-workers/atendenet_pinhais_cnd
+      - ${SEFAZ_PR_DADOS_VOLUME:-C:/data}:/evidencias-workers/sefaz_pr_certidao_debitos
+      - ${ATENDENET_PINHAIS_DADOS_VOLUME:-C:/data}:/evidencias-workers/atendenet_pinhais_cnd
       - worker_fgts_caixa_data:/evidencias-workers/fgts_caixa
       - worker_mpf_certidao_data:/evidencias-workers/mpf_certidao_negativa
       - worker_curitiba_cnd_cpf_data:/evidencias-workers/curitiba_cnd_cpf

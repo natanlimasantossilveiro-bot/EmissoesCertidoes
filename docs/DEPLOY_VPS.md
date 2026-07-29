@@ -50,6 +50,17 @@ Preencha no `.env`:
   (troque a senha pelo próprio painel assim que logar a primeira vez,
   tem um link "Trocar senha" no topo)
 - `TWOCAPTCHA_API_KEY` — a chave real do 2captcha
+- `RECEITA_FEDERAL_DADOS_VOLUME=worker_rf_data`,
+  `SEFAZ_PR_DADOS_VOLUME=worker_sefaz_pr_data`,
+  `ATENDENET_PINHAIS_DADOS_VOLUME=worker_atendenet_pinhais_data` — **só
+  necessário em VPS/Linux**. Sem isso, o Gateway e o `cleanup-evidencias`
+  tentam ler `C:/data` (default pensado pro Windows local, onde
+  `receita_federal`/`sefaz_pr_certidao_debitos`/`atendenet_pinhais_cnd`
+  rodam nativos). No Linux esses 3 portais rodam como container normal,
+  então precisam apontar pro volume Docker de cada um — ⚠️ **não use
+  `sed` pra trocar `C:/data` por `/data`**, isso aponta pra uma pasta
+  vazia sem relação com o worker de verdade (download da certidão/
+  evidência desses 3 portais fica quebrado no painel).
 
 ## 4. Descobrir o domínio temporário (sslip.io)
 
