@@ -420,6 +420,17 @@ function cabecalhosAuth() {
   return t ? { ...base, "Authorization": `Bearer ${t}` } : base;
 }
 
+// Resposta de erro (502/504/timeout do proxy, Gateway fora do ar) vem como
+// página HTML, não JSON — resp.json() direto quebra com um erro técnico de
+// parser ("Unexpected token '<'..."). Isso vira uma mensagem de verdade.
+async function jsonSeguro(resp) {
+  try {
+    return await resp.json();
+  } catch {
+    throw new Error("Não foi possível falar com o servidor. Tente novamente em instantes.");
+  }
+}
+
 // Wrapper em volta de fetch: manda o token automaticamente, e se o
 // Gateway responder 401 (token expirado/inválido), desloga sozinho em
 // vez de deixar cada chamada falhar silenciosamente sem explicação.
@@ -497,7 +508,7 @@ el("btnLogin").addEventListener("click", async () => {
       headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
       body: JSON.stringify({ email, senha }),
     });
-    const dados = await resp.json();
+    const dados = await jsonSeguro(resp);
     if (!resp.ok) throw new Error(dados.detail || "E-mail ou senha inválidos.");
     localStorage.setItem(STORAGE_GATEWAY_KEY, gatewayUrl());
     localStorage.setItem(STORAGE_TOKEN_KEY, dados.access_token);
