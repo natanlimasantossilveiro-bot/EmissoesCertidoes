@@ -152,6 +152,62 @@ origem). Só usar esse campo se for testar contra outro Gateway.
   reinícios do container.
 - `.env` nunca é commitado (já está no `.gitignore`).
 
+## Mantendo workers nativos do Windows conectados ao VPS (Tailscale)
+
+Se `receita_federal`, `sefaz_pr_certidao_debitos` e/ou `atendenet_pinhais_cnd`
+continuarem rodando nativos numa máquina Windows do escritório (bloqueio de
+automação em ambiente Linux, ver aviso no topo de cada `worker.py`), eles
+precisam falar com o RabbitMQ/MySQL do VPS pela rede. Usa o Tailscale que
+já deve estar configurado no servidor (rede privada, nunca expõe essas
+portas pra internet pública):
+
+**No VPS**, criar credenciais dedicadas (nunca reaproveitar `guest`/`root`):
+
+```bash
+docker compose exec rabbitmq rabbitmqctl add_user certidoes_worker '<SENHA_FORTE>'
+docker compose exec rabbitmq rabbitmqctl set_permissions -p / certidoes_worker \
+  '^(receita_federal|sefaz_pr_certidao_debitos|atendenet_pinhais_cnd)(\.dlq)?$' \
+  '^(receita_federal|sefaz_pr_certidao_debitos|atendenet_pinhais_cnd)(\.dlq)?$' \
+  '^(receita_federal|sefaz_pr_certidao_debitos|atendenet_pinhais_cnd)(\.dlq)?$'
+
+docker compose exec mysql mysql -uroot -proot -e "
+  CREATE USER 'certidoes_worker'@'%' IDENTIFIED BY '<OUTRA_SENHA_FORTE>';
+  GRANT SELECT, INSERT, UPDATE ON certidoes.* TO 'certidoes_worker'@'%';
+  FLUSH PRIVILEGES;"
+```
+
+Adicionar no `.env` o IP do servidor **na rede Tailscale** (não o IP
+público — `tailscale ip -4` mostra qual é):
+
+```
+VPS_TAILSCALE_IP=100.x.x.x
+```
+
+Liberar no firewall só pra interface do Tailscale:
+
+```bash
+sudo ufw allow in on tailscale0
+```
+
+Recriar `rabbitmq`/`mysql` pra aplicar o bind de porta novo (breve
+interrupção — poucos segundos, todos os workers reconectam sozinhos
+graças ao `restart: unless-stopped`):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+**Na máquina Windows**, apontar os 3 workers nativos pro VPS em vez de
+`localhost` (mesmo `nohup` de sempre, só troca essas duas variáveis):
+
+```bash
+RABBITMQ_URL=amqp://certidoes_worker:<SENHA_FORTE>@100.x.x.x:5672/ \
+DATABASE_URL=mysql+pymysql://certidoes_worker:<OUTRA_SENHA_FORTE>@100.x.x.x:3306/certidoes \
+BROWSER_HEADLESS=false \
+PYTHONUNBUFFERED=1 \
+nohup "../.venv/Scripts/python.exe" worker.py > worker.log 2>&1 & disown
+```
+
 ## Quando comprarem um domínio de verdade
 
 Repita os passos 6 e 7 usando o domínio novo em vez do `sslip.io`

@@ -5,6 +5,23 @@
 # Gateway) e o Certbot (emite/renova o certificado HTTPS). Ver
 # docs/DEPLOY_VPS.md pro passo a passo completo.
 services:
+  # Libera RabbitMQ/MySQL só na interface do Tailscale (rede privada,
+  # nunca na internet pública) — necessário pros 3 workers nativos do
+  # Windows (receita_federal/sefaz_pr_certidao_debitos/atendenet_pinhais_cnd)
+  # continuarem rodando na máquina do escritório, mesmo com o resto do
+  # sistema já no VPS. Usam um usuário próprio (certidoes_worker), nunca
+  # guest/root — ver docs/DEPLOY_VPS.md pro passo a passo de criação.
+  # ${VPS_TAILSCALE_IP} vem do .env do VPS; sem essa variável, docker
+  # compose falha ao subir (propositalmente — não faz sentido essa
+  # binding "cair" pra 0.0.0.0 por engano).
+  rabbitmq:
+    ports:
+      - "${VPS_TAILSCALE_IP}:5672:5672"
+
+  mysql:
+    ports:
+      - "${VPS_TAILSCALE_IP}:3306:3306"
+
   nginx:
     image: nginx:alpine
     restart: unless-stopped
