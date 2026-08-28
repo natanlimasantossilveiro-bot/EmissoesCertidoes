@@ -73,6 +73,7 @@ class MptCertidaoNegativa(AutomacaoNodriverBase):
     browser_args_extra = [f"--user-agent={UA_CHROME_REAL}"]
 
     async def preencher_e_emitir(self, page, pedido: PedidoCertidao) -> ResultadoEmissao:
+        await self._aceitar_cookies_se_existir(page)
         await self._selecionar_criterio(page, pedido.tipo)
         digitos = re.sub(r"\D", "", pedido.documento or "")
         seletor_campo = "#cpf" if (pedido.tipo or "pf").lower() == "pf" else "#cnpj"
@@ -80,8 +81,15 @@ class MptCertidaoNegativa(AutomacaoNodriverBase):
         await campo.send_keys(digitos)
         await page.wait(1)
 
-        resolvedor = obter_resolvedor()
-        token = await resolvedor.resolver_recaptcha_enterprise(SITEKEY_RECAPTCHA, self.url_inicial, invisible=False)
+        token = await self._resolver_captcha_com_retentativas()
+        if not token:
+            return ResultadoEmissao(
+                status=StatusPedido.ERRO_TECNICO,
+                mensagem="2captcha não conseguiu resolver o reCAPTCHA Enterprise do MPT após 3 tentativas — "
+                         "esse portal específico tem taxa de sucesso baixa nesse tipo de captcha (não é falha de "
+                         "cota do site, é o próprio serviço de resolução não conseguindo gerar um token válido).",
+                caminho_certidao="",
+            )
         await self._injetar_token_captcha(page, token)
         await page.wait(1)
 
@@ -100,6 +108,42 @@ class MptCertidaoNegativa(AutomacaoNodriverBase):
             mensagem=resultado_bruto["mensagem"],
             caminho_certidao=caminho_certidao,
         )
+
+    async def _resolver_captcha_com_retentativas(self, tentativas: int = 3) -> str:
+        # ⚠️ ERROR_CAPTCHA_UNSOLVABLE do 2captcha nesse portal específico
+        # (reCAPTCHA Enterprise em modo checkbox) parece intermitente, não
+        # uma falha 100% determinística — daí valer tentar de novo antes
+        # de desistir, em vez de derrubar o pedido inteiro na primeira
+        # falha. Cada tentativa gasta crédito do 2captcha; 3 é um teto
+        # razoável pra não gastar sem limite num portal que já é sabido
+        # como difícil.
+        resolvedor = obter_resolvedor()
+        for tentativa in range(1, tentativas + 1):
+            try:
+                return await resolvedor.resolver_recaptcha_enterprise(
+                    SITEKEY_RECAPTCHA, self.url_inicial, invisible=False
+                )
+            except Exception as erro:
+                print(f"[{self.portal}] Tentativa {tentativa}/{tentativas} de resolver captcha falhou: {erro}")
+                if tentativa < tentativas:
+                    await asyncio.sleep(5)
+        return ""
+
+    async def _aceitar_cookies_se_existir(self, page):
+        # Regressão real (site mudou depois da última validação): apareceu
+        # um banner de cookies (".cookie-btn", texto "Estou ciente") que
+        # não existia quando este worker foi construído — mesmo padrão já
+        # visto e corrigido na Receita Federal. Confirmado num reconheci-
+        # mento ao vivo (sem gastar captcha) que o formulário de CPF/CNPJ
+        # continua com a mesma estrutura HTML de sempre; o banner cobrindo
+        # a tela é a suspeita mais forte pro motivo do envio não navegar.
+        await page.evaluate("""
+            (() => {
+                const botao = document.querySelector('.cookie-btn');
+                if (botao) botao.click();
+            })()
+        """)
+        await page.wait(1)
 
     async def _selecionar_criterio(self, page, tipo: str):
         valor = "CPF" if (tipo or "pf").lower() == "pf" else "CNPJ"
