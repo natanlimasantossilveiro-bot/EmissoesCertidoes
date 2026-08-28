@@ -10,6 +10,7 @@ chamar capturar_evidencia() — a base já garante.
 import asyncio
 import base64
 import shutil
+import tempfile
 from abc import abstractmethod
 from pathlib import Path
 
@@ -170,10 +171,20 @@ class AutomacaoNodriverBase(AutomacaoPortal):
         ]
         if self.requer_no_sandbox:
             browser_args.insert(1, "--no-sandbox")
+        # ⚠️ Vazamento real encontrado em produção (VPS ficou com disco
+        # 100% cheio depois de ~1 mês): sem `user_data_dir` explícito, o
+        # nodriver cria uma pasta temporária própria por sessão (prefixo
+        # "uc_" em /tmp) e `browser.stop()` só mata o processo do Chrome —
+        # nunca apaga essa pasta. Com 19 workers rodando pedido atrás de
+        # pedido por semanas, isso acumulou dezenas de milhares de pastas
+        # (86GB). Controlando o diretório nós mesmos, garantimos a limpeza
+        # no `finally`, mesmo se o worker travar/der erro no meio.
+        pasta_perfil_temporario = tempfile.mkdtemp(prefix="nodriver_perfil_")
         browser = await nd.start(
             headless=config.BROWSER_HEADLESS,
             browser_args=browser_args,
             browser_executable_path=self.browser_executable_path,
+            user_data_dir=pasta_perfil_temporario,
         )
         try:
             page = await browser.get("about:blank")
@@ -223,6 +234,13 @@ class AutomacaoNodriverBase(AutomacaoPortal):
                 browser.stop()
             except Exception as erro:
                 print(f"[{self.portal}] Aviso ao fechar navegador: {erro}")
+            # browser.stop() não espera o processo do Chrome terminar de
+            # verdade (só manda o sinal) — sem essa folga, o rmtree corre
+            # contra o SO ainda soltando os arquivos, deixando uma sobra
+            # mínima (~60KB de lock file) em vez da pasta inteira. Ainda
+            # assim, ignore_errors=True garante que nunca derruba o worker.
+            await asyncio.sleep(0.5)
+            shutil.rmtree(pasta_perfil_temporario, ignore_errors=True)
 
     # ---------- helpers de download, comuns a qualquer portal via nodriver ----------
 
