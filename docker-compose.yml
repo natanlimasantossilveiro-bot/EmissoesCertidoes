@@ -85,6 +85,12 @@ services:
       - worker_mpt_certidao_data:/dados-workers/mpt_certidao_negativa:ro
       - worker_curitiba_guia_amarela_data:/dados-workers/curitiba_guia_amarela:ro
       - worker_curitiba_cnd_cnpj_data:/dados-workers/curitiba_cnd_cnpj:ro
+      # Volume dedicado, só do Gateway (leitura-escrita) — onde certidões
+      # emitidas manualmente (fluxo AGUARDANDO_MANUAL, ver
+      # POST /pedidos/{id}/certidao-manual) são salvas. Não tem relação com
+      # o volume de nenhum worker: evita mexer no worker-sefaz-pr ou em
+      # qualquer outro portal pra viabilizar esse fluxo.
+      - gateway_uploads_manuais:/dados-manuais
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -525,3 +531,4 @@ volumes:
   worker_mpt_certidao_data:
   worker_curitiba_guia_amarela_data:
   worker_curitiba_cnd_cnpj_data:
+  gateway_uploads_manuais:

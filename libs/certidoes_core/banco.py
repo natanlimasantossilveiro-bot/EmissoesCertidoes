@@ -23,6 +23,11 @@ class StatusPedido(str, enum.Enum):
     ERRO_PORTAL = "erro_portal"          # portal recusou/erro de negócio (ex: Receita)
     ERRO_TECNICO = "erro_tecnico"        # captcha, timeout, portal fora do ar
     FALHA_INDEFINIDA = "falha_indefinida"
+    # Automação esgotou as tentativas num portal sem solução garantida (ex:
+    # SEFAZ-PR — bloqueio por fingerprint avançado, não IP/SO). Fica visível
+    # como pendência separada até alguém resolver manualmente no site e
+    # anexar o PDF pelo painel. Ver `AutomacaoPortal.url_fallback_manual`.
+    AGUARDANDO_MANUAL = "aguardando_manual"
 
 
 class PapelUsuario(str, enum.Enum):

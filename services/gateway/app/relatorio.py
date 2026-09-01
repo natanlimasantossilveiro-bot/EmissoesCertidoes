@@ -30,6 +30,7 @@ STATUS_LABELS = {
     "erro_portal": "Erro do portal",
     "erro_tecnico": "Erro técnico",
     "falha_indefinida": "Falha indefinida",
+    "aguardando_manual": "Aguardando resolução manual",
 }
 
 CABECALHO = [

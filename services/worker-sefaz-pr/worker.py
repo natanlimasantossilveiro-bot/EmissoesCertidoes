@@ -40,6 +40,11 @@ from certidoes_core.automacao.nodriver_base import AutomacaoNodriverBase
 class SefazPrCertidaoDebitos(AutomacaoNodriverBase):
     portal = "sefaz_pr_certidao_debitos"
     url_inicial = "https://cdwfazenda.paas.pr.gov.br/cdwportal/certidao/automatica"
+    # Sem solução de automação garantida (bloqueio por fingerprint avançado
+    # tipo Akamai, confirmado mesmo rodando nativo do IP real do escritório
+    # — não é detecção de SO nem reputação de IP). Na última tentativa, cai
+    # pra AGUARDANDO_MANUAL em vez de DLQ — ver AutomacaoPortal.processar_pedido.
+    url_fallback_manual = url_inicial
     espera_inicial_segundos = 5
 
     async def preencher_e_emitir(self, page, pedido: PedidoCertidao) -> ResultadoEmissao:

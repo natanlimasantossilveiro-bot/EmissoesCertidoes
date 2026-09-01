@@ -15,6 +15,7 @@ from certidoes_core.banco import (
     get_session, criar_tabelas, PedidoCertidao, LotePlanilha, StatusPedido, Usuario, PapelUsuario,
 )
 from certidoes_core.fila import publicar_pedido
+from certidoes_core.nomenclatura import gerar_nome_certidao
 
 from app.planilha import ler_planilha_certidoes  # parser adaptado, ver services/gateway/app/planilha.py
 from app.relatorio import gerar_relatorio_lote  # ver services/gateway/app/relatorio.py
@@ -126,6 +127,12 @@ CAMINHO_DADOS_POR_PORTAL = {
     "curitiba_guia_amarela": "/dados-workers/curitiba_guia_amarela",
     "curitiba_cnd_cnpj": "/dados-workers/curitiba_cnd_cnpj",
 }
+
+
+# Onde certidões resolvidas manualmente (fluxo AGUARDANDO_MANUAL, ver
+# POST /pedidos/{id}/certidao-manual) são salvas — volume próprio do
+# Gateway (leitura-escrita), sem relação com o volume de nenhum worker.
+CAMINHO_UPLOADS_MANUAIS = Path("/dados-manuais")
 
 
 def _resolver_arquivo_worker(portal: str, caminho_gravado: str | None) -> Path | None:
@@ -463,7 +470,14 @@ def _baixar_arquivo_pedido(pedido_id: str, campo: str, rotulo: str) -> FileRespo
         if not pedido:
             raise HTTPException(404, "Pedido não encontrado.")
         caminho_gravado = getattr(pedido, campo)
-        arquivo = _resolver_arquivo_worker(pedido.portal, caminho_gravado)
+        # Certidão anexada via fluxo manual (AGUARDANDO_MANUAL) fica no
+        # volume próprio do Gateway, fora da convenção "/data/..." de
+        # dentro do worker — por isso não passa por _resolver_arquivo_worker.
+        if caminho_gravado and caminho_gravado.startswith(str(CAMINHO_UPLOADS_MANUAIS)):
+            arquivo = Path(caminho_gravado)
+            arquivo = arquivo if arquivo.is_file() else None
+        else:
+            arquivo = _resolver_arquivo_worker(pedido.portal, caminho_gravado)
         if not arquivo:
             raise HTTPException(404, f"Arquivo de {rotulo} não encontrado no servidor.")
         return FileResponse(arquivo, filename=arquivo.name)
@@ -477,6 +491,66 @@ def baixar_certidao(pedido_id: str, _usuario: Usuario = Depends(obter_usuario_at
 @app.get("/pedidos/{pedido_id}/evidencia")
 def baixar_evidencia(pedido_id: str, _usuario: Usuario = Depends(obter_usuario_atual)):
     return _baixar_arquivo_pedido(pedido_id, "url_evidencia", "evidência")
+
+
+@app.get("/pedidos/aguardando-manual")
+def listar_pedidos_aguardando_manual(_usuario: Usuario = Depends(obter_usuario_atual)):
+    """Pedidos que esgotaram a automação num portal sem solução garantida
+    (ex: SEFAZ-PR — ver AutomacaoPortal.url_fallback_manual) e esperam
+    alguém resolver manualmente no site do portal e anexar o PDF (ver
+    POST /pedidos/{id}/certidao-manual, abaixo)."""
+    with get_session() as session:
+        pedidos = (
+            session.query(PedidoCertidao)
+            .filter_by(status=StatusPedido.AGUARDANDO_MANUAL)
+            .order_by(PedidoCertidao.atualizado_em.desc())
+            .all()
+        )
+        return [
+            {
+                "id": p.id,
+                "portal": p.portal,
+                "nome": p.nome,
+                "documento": p.documento,
+                "mensagem": p.mensagem,
+                "atualizado_em": _marcar_utc(p.atualizado_em),
+            }
+            for p in pedidos
+        ]
+
+
+@app.post("/pedidos/{pedido_id}/certidao-manual")
+async def anexar_certidao_manual(
+    pedido_id: str,
+    arquivo: UploadFile = File(...),
+    usuario: Usuario = Depends(obter_usuario_atual),
+):
+    """Fecha o ciclo de um pedido AGUARDANDO_MANUAL: alguém resolveu na mão
+    no site do portal e anexa o PDF aqui. Só aceito nesse status — evita
+    sobrescrever sem querer o resultado de um pedido automatizado."""
+    with get_session() as session:
+        pedido = session.get(PedidoCertidao, pedido_id)
+        if not pedido:
+            raise HTTPException(404, "Pedido não encontrado.")
+        if pedido.status != StatusPedido.AGUARDANDO_MANUAL:
+            raise HTTPException(
+                400,
+                f"Pedido não está aguardando resolução manual (status atual: {pedido.status.value}).",
+            )
+
+        conteudo = await arquivo.read()
+        nome_arquivo = gerar_nome_certidao(pedido.nome, pedido.portal, pedido.documento, tipo=pedido.tipo)
+        CAMINHO_UPLOADS_MANUAIS.mkdir(parents=True, exist_ok=True)
+        caminho_final = CAMINHO_UPLOADS_MANUAIS / nome_arquivo
+        caminho_final.write_bytes(conteudo)
+
+        pedido.status = StatusPedido.SUCESSO_CONFIRMADO
+        pedido.caminho_certidao = str(caminho_final)
+        nota = f"Resolvido manualmente por {usuario.nome} em {datetime.utcnow().strftime('%d/%m/%Y %H:%M')} (UTC)."
+        pedido.mensagem = f"{nota} {pedido.mensagem or ''}".strip()
+        session.commit()
+
+    return {"status": "sucesso_confirmado"}
 
 
 @app.get("/lotes/{lote_id}")
