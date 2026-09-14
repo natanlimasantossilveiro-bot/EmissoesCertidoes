@@ -139,7 +139,6 @@
     font-size: .85rem; cursor: pointer;
   }
   .portal-item input[type="checkbox"] { width: auto; }
-  .portal-item .badge-mini { margin-left: auto; font-size: .8rem; }
   .portal-item.disabled { opacity: .35; cursor: not-allowed; }
 
   button {
@@ -805,8 +804,7 @@ function renderizarListaPortais(containerId, portais) {
     titulo.textContent = TITULO_GRUPO[grupo];
     container.appendChild(titulo);
     for (const { chave, label } of grupos[grupo]) {
-      const info = STATUS_PORTAL[chave] || { nivel: "teste", texto: "🧪 Status ainda não catalogado" };
-      const emoji = info.nivel === "ok" ? "✅" : info.nivel === "parcial" ? "🟡" : "🧪";
+      const info = STATUS_PORTAL[chave] || { nivel: "teste", texto: "Status ainda não catalogado" };
       const restricao = TIPO_DOCUMENTO_RESTRITO_POR_PORTAL[chave];
       const sufixoRestricao = restricao ? ` (somente ${restricao.toUpperCase()})` : "";
       const item = document.createElement("label");
@@ -815,7 +813,6 @@ function renderizarListaPortais(containerId, portais) {
       item.innerHTML = `
         <input type="checkbox" value="${chave}" data-grupo="${grupo}">
         <span>${label}${sufixoRestricao}</span>
-        <span class="badge-mini">${emoji}</span>
       `;
       container.appendChild(item);
     }
