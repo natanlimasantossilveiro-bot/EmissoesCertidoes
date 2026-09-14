@@ -38,11 +38,27 @@ valor final no print de evidência: "081.152.924-93" em vez de
 uma certidão emitida recentemente pro mesmo CPF, o site mostra um
 diálogo "Aviso — Já existe certidão Emitida para este CPF." com dois
 botões ("Visualizar" / "Gerar Nova Certidão") **em vez de** gerar a
-certidão direto — sem tratar isso, o worker ficava parado nesse
-diálogo e a captura de PDF pegava só a tela do aviso, não a certidão.
-Corrigido clicando "Gerar Nova Certidão" automaticamente quando esse
-diálogo aparece (`_tratar_aviso_certidao_existente`), garantindo uma
-via nova a cada pedido em vez de reaproveitar a anterior.
+certidão direto.
+
+⚠️⚠️ **Bug real mais sério, confirmado ao vivo em 14/09/2026**: a
+primeira versão deste worker clicava "Gerar Nova Certidão" automaticamente
+nesse diálogo — só que o site **só permite uma emissão por CPF**; pedir
+uma nova quando já existe sempre falha (confirmado manualmente pelo
+escritório e reproduzido em teste: vira "Aguardando processamento" preso
+ou "Erro 404"). Pior — antes de existir a checagem de
+`_pagina_ainda_mostra_resultado` (ver mais abaixo), esse caminho às vezes
+gravava SUCESSO com um PDF vazio (a página tinha voltado sozinha pro
+formulário inicial antes do fallback de print rodar).
+
+O caminho certo, confirmado manualmente e depois reproduzido por
+reconhecimento ao vivo (sem gastar nada): quando esse diálogo aparece, ir
+em "Emitir Segunda Via" (`/Certidao/SegundaViaCpf` — mesmo formulário
+`#DocumentoCpf`/Altcha/`#btnSolicitar`, só que o botão chama "Imprimir"),
+que leva a uma listagem (`#tblListaCertidoes`) com todas as certidões já
+emitidas pro CPF, mais recente primeiro; o botão de imprimir de cada linha
+(`button[data-action="imprimir"]`) abre um modal com Imprimir/Baixar/Fechar
+— o mesmo botão "Baixar" já usado no fluxo principal. Ver
+`_emitir_segunda_via`.
 """
 import asyncio
 import re
@@ -61,6 +77,7 @@ UA_CHROME_REAL = (
 class CuritibaCndCpf(AutomacaoNodriverBase):
     portal = "curitiba_cnd_cpf"
     url_inicial = "https://cnd-cidadao.curitiba.pr.gov.br/Certidao/SolicitarCpf"
+    url_segunda_via = "https://cnd-cidadao.curitiba.pr.gov.br/Certidao/SegundaViaCpf"
     espera_inicial_segundos = 4
     # Mesmo ajuste do FGTS/MPF: o Akamai bloqueava o Chromium headless
     # pelo User-Agent, não por IP — ver aviso no topo do arquivo.
@@ -78,7 +95,10 @@ class CuritibaCndCpf(AutomacaoNodriverBase):
         await page.wait(1)
 
         await self._clicar_gerar_certidao(page)
-        await self._tratar_aviso_certidao_existente(page)
+
+        if await self._aviso_certidao_existente_apareceu(page):
+            return await self._emitir_segunda_via(page, pedido, pdfs_antes)
+
         # Mesma correção aplicada no worker de Imóvel (mesma plataforma):
         # depois de "Gerar Nova Certidão" (quando já existe uma certidão
         # recente pro mesmo CPF), o site processa a nova certidão de forma
@@ -107,6 +127,23 @@ class CuritibaCndCpf(AutomacaoNodriverBase):
             caminho_certidao = await self.aguardar_e_mover_pdf(pedido, pdfs_antes, tentativas=20)
             if not caminho_certidao:
                 await self._aguardar_processamento_finalizar(page)
+                # ⚠️ Bug real confirmado em teste ao vivo (14/09): quando o
+                # clique em "Baixar" não gera um download de verdade (cai
+                # aqui), a página às vezes já tinha voltado sozinha pro
+                # formulário inicial em branco antes desse fallback tirar o
+                # print — resultado: SUCESSO gravado com uma "certidão" que
+                # era só o formulário vazio, sem nenhum dado real. Confere
+                # se a página ainda mostra o resultado antes de aceitar o
+                # print como certidão válida; se não mostrar mais, é melhor
+                # marcar como erro técnico (permite nova tentativa) do que
+                # entregar um PDF inútil como se fosse sucesso.
+                if not await self._pagina_ainda_mostra_resultado(page):
+                    return ResultadoEmissao(
+                        status=StatusPedido.ERRO_TECNICO,
+                        mensagem="O portal confirmou a certidão, mas a página voltou ao formulário inicial antes de "
+                                 "conseguirmos capturar o arquivo final — tente novamente.",
+                        caminho_certidao="",
+                    )
                 caminho_certidao = await self.salvar_pagina_como_pdf(page, pedido)
 
         return ResultadoEmissao(
@@ -141,29 +178,96 @@ class CuritibaCndCpf(AutomacaoNodriverBase):
             })()
         """)
 
-    async def _tratar_aviso_certidao_existente(self, page, tentativas: int = 8):
-        # Se já existe uma certidão emitida recentemente pro mesmo CPF,
-        # o site mostra um diálogo "Já existe certidão Emitida para este
-        # CPF" com botões "Visualizar"/"Gerar Nova Certidão" em vez de
-        # gerar direto. Clica "Gerar Nova Certidão" pra sempre conseguir
-        # uma via nova, em vez de ficar parado nesse diálogo.
-        # ⚠️ Bug real: uma checagem única (sem repetir) perdia o diálogo
-        # quando ele demorava mais que o esperado pra aparecer — a
-        # interpretação seguinte acabava lendo o texto do próprio
-        # diálogo em vez do resultado. Corrigido com polling.
+    async def _aviso_certidao_existente_apareceu(self, page, tentativas: int = 8) -> bool:
+        """Detecta (sem clicar em nada) se o diálogo "Já existe certidão
+        Emitida para este CPF" apareceu depois de clicar Gerar Certidão.
+        ⚠️ Pedir uma via nova nesse caso sempre falha nesse portal
+        (confirmado ao vivo em 14/09/2026 — vira "Aguardando
+        processamento" preso ou Erro 404); o caminho certo é
+        `_emitir_segunda_via`. Polling (não uma checagem única) porque o
+        diálogo pode demorar mais que o esperado pra aparecer."""
         for _ in range(tentativas):
-            clicou = await page.evaluate("""
+            existe = await page.evaluate("""
                 (() => {
                     const botoes = Array.from(document.querySelectorAll('button, a'));
-                    const botao = botoes.find(b => (b.innerText || '').trim() === 'Gerar Nova Certidão');
-                    if (botao) { botao.click(); return true; }
-                    return false;
+                    return botoes.some(b => (b.innerText || '').trim() === 'Gerar Nova Certidão');
                 })()
             """)
-            if clicou:
-                await page.wait(1)
-                return
+            if existe:
+                return True
             await page.wait(1)
+        return False
+
+    async def _emitir_segunda_via(self, page, pedido: PedidoCertidao, pdfs_antes: set) -> ResultadoEmissao:
+        """Já existe certidão emitida recentemente pro CPF — recupera a
+        última via já emitida pela tela dedicada "Emitir Segunda Via" (o
+        mesmo procedimento manual confirmado pelo escritório), em vez de
+        tentar gerar uma nova (que sempre falha nesse portal). Estrutura
+        confirmada por reconhecimento ao vivo em 14/09/2026: mesmo
+        formulário `#DocumentoCpf`/Altcha/`#btnSolicitar` (aqui com texto
+        "Imprimir"), depois uma listagem (`#tblListaCertidoes`) com todas
+        as certidões já emitidas pro CPF, mais recente primeiro — o botão
+        de imprimir da primeira linha abre o mesmo modal
+        Imprimir/Baixar/Fechar do fluxo principal."""
+        await page.get(self.url_segunda_via)
+        await page.wait(3)
+
+        campo = await page.select("#DocumentoCpf")
+        digitos = re.sub(r"\D", "", pedido.documento or "")
+        await self.digitar_devagar(campo, digitos)
+        await page.wait(1)
+
+        await self._resolver_altcha(page)
+        await page.wait(1)
+
+        await self._clicar_gerar_certidao(page)  # mesmo #btnSolicitar, texto "Imprimir" aqui
+
+        if not await self._aguardar_listagem_segunda_via(page):
+            return ResultadoEmissao(
+                status=StatusPedido.ERRO_TECNICO,
+                mensagem="Já existe certidão emitida pra esse CPF, mas a listagem da segunda via não carregou.",
+                caminho_certidao="",
+            )
+
+        await self._clicar_primeira_certidao_listagem(page)
+        await page.wait(2)
+        await self._clicar_baixar_certidao(page)
+        await self._aguardar_processamento_finalizar(page)
+
+        caminho_certidao = await self.aguardar_e_mover_pdf(pedido, pdfs_antes, tentativas=15)
+        if not caminho_certidao:
+            if not await self._pagina_ainda_mostra_resultado(page):
+                return ResultadoEmissao(
+                    status=StatusPedido.ERRO_TECNICO,
+                    mensagem="Já existe certidão emitida pra esse CPF, mas não foi possível capturar o arquivo da "
+                             "segunda via — tente novamente.",
+                    caminho_certidao="",
+                )
+            caminho_certidao = await self.salvar_pagina_como_pdf(page, pedido)
+
+        return ResultadoEmissao(
+            status=StatusPedido.SUCESSO_CONFIRMADO,
+            mensagem="Certidão recuperada via 'Emitir Segunda Via' (já existia uma emissão recente pra esse CPF).",
+            caminho_certidao=caminho_certidao,
+        )
+
+    async def _aguardar_listagem_segunda_via(self, page, tentativas: int = 15) -> bool:
+        for _ in range(tentativas):
+            existe = await page.evaluate("""
+                (() => !!document.querySelector('#tblListaCertidoes tbody tr td button[data-action="imprimir"]'))()
+            """)
+            if existe:
+                return True
+            await page.wait(1)
+        return False
+
+    async def _clicar_primeira_certidao_listagem(self, page):
+        await page.evaluate("""
+            (() => {
+                const botao = document.querySelector('#tblListaCertidoes tbody tr td button[data-action="imprimir"]');
+                if (botao) botao.click();
+            })()
+        """)
 
     async def _aguardar_processamento_finalizar(self, page, tentativas: int = 15):
         for _ in range(tentativas):
@@ -172,6 +276,21 @@ class CuritibaCndCpf(AutomacaoNodriverBase):
             if "aguardando processamento" not in texto_lower:
                 return
             await page.wait(1)
+
+    async def _pagina_ainda_mostra_resultado(self, page) -> bool:
+        """Mesmos padrões de texto usados em `_interpretar_resultado` pra
+        confirmar sucesso — reaproveitados aqui só pra checar se a página
+        ainda está no mesmo estado (não voltou pro formulário inicial)
+        antes de aceitar um print de fallback como certidão válida."""
+        texto = await page.evaluate("(() => document.body.innerText)()")
+        texto_lower = (texto or "").lower()
+        return (
+            "não existir pendênc" in texto_lower
+            or "existir pendênc" in texto_lower
+            or "certidão negativa" in texto_lower
+            or "certidão positiva" in texto_lower
+            or ("imprimir" in texto_lower and "baixar" in texto_lower)
+        )
 
     async def _clicar_baixar_certidao(self, page):
         await page.evaluate("""
@@ -191,9 +310,9 @@ class CuritibaCndCpf(AutomacaoNodriverBase):
         if "erro 404" in texto_lower or "não pode ser encontrado" in texto_lower:
             return {
                 "status": "erro_tecnico",
-                "mensagem": "Erro técnico do próprio portal (404) após o envio — confirmado que acontece ao clicar "
-                             "\"Gerar Nova Certidão\" pro mesmo CPF testado poucos minutos antes; provável limite de "
-                             "repetição do próprio site, não bloqueio permanente. Ver evidência.",
+                "mensagem": "Erro técnico do próprio portal (404) após o envio — provável limite de repetição do "
+                             "próprio site pro mesmo CPF testado poucas vezes seguidas, não bloqueio permanente. "
+                             "Ver evidência.",
             }
         # Confirmado contra o site real: o texto exato da certidão negativa
         # é "certificamos não existir pendências em nome do contribuinte".
