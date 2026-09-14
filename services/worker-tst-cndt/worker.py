@@ -105,18 +105,30 @@ class TstCndt(AutomacaoNodriverBase):
             })()
         """)
 
-    async def _obter_imagem_captcha(self, page) -> str:
-        src = await page.evaluate("""
-            (() => {
-                const img = document.getElementById('idImgBase64');
-                return img ? img.src : '';
-            })()
-        """)
-        # src vem como "data:image/png;base64,XXXXX" — resolver_captcha_imagem
-        # espera só o conteúdo base64, sem o prefixo do data URI.
-        if "base64," in src:
-            return src.split("base64,", 1)[1]
-        return src
+    async def _obter_imagem_captcha(self, page, tentativas: int = 10) -> str:
+        # ⚠️ Bug real confirmado em produção (14/09/2026): lendo o `src` só
+        # uma vez, logo depois do clique em "Emitir Certidão", às vezes
+        # pegava a imagem ainda vazia (a chamada AJAX do RichFaces nem
+        # sempre termina dentro do `page.wait(3)` fixo antes daqui) — o
+        # 2captcha recusava de cara com "File required" (mensagem da
+        # própria biblioteca, não do TST), sem nenhuma pista do motivo
+        # real no log. Corrigido com polling de verdade até o `src`
+        # realmente ter conteúdo base64.
+        for _ in range(tentativas):
+            src = await page.evaluate("""
+                (() => {
+                    const img = document.getElementById('idImgBase64');
+                    return img ? img.src : '';
+                })()
+            """)
+            # src vem como "data:image/png;base64,XXXXX" — resolver_captcha_imagem
+            # espera só o conteúdo base64, sem o prefixo do data URI.
+            if "base64," in src:
+                return src.split("base64,", 1)[1]
+            await page.wait(1)
+        raise RuntimeError(
+            "Imagem do captcha (#idImgBase64) não carregou a tempo — provável lentidão do TST, não erro do documento."
+        )
 
     async def _preencher_formulario(self, page, documento: str, resposta_captcha: str):
         documento_js = json.dumps(documento)
