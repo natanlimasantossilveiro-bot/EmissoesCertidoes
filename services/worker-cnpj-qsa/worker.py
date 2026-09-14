@@ -180,6 +180,18 @@ class CnpjQsa(AutomacaoNodriverBase):
 
         if "complete a verificação do captcha" in texto_lower:
             return {"status": "erro_captcha", "mensagem": "O Angular não reconheceu o captcha resolvido."}
+        # ⚠️ Bug real confirmado em produção (14/09/2026): essa é a
+        # mensagem de rejeição de verdade do BACKEND (diferente da
+        # validação client-side acima) — provável inconsistência de IP
+        # entre quem resolve o captcha e quem submete (ver aviso no topo
+        # do arquivo). Sem esse branch, caía no "sucesso provável" padrão,
+        # reportando a própria tela de erro como se fosse o comprovante.
+        if "erro ao validar captcha" in texto_lower:
+            return {
+                "status": "erro_captcha",
+                "mensagem": "Backend da Receita Federal rejeitou o captcha (provável IP divergente entre o "
+                             "resolvedor e o worker) — não é falha do documento. Ver evidência.",
+            }
         if any(frase in texto_lower for frase in ["não encontrado", "inválido", "não pôde ser processada", "não é possível"]):
             return {"status": "erro_portal", "mensagem": texto[:1000] or "A Receita Federal recusou a solicitação."}
         if "comprovante" in texto_lower and ("gerad" in texto_lower or "emitid" in texto_lower):
