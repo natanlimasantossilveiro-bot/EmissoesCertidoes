@@ -36,6 +36,18 @@ nem é necessariamente um `<a>`) — o clique nunca acontecia, e o worker
 caía direto no plano B (`salvar_pagina_como_pdf`), entregando só a tela de
 resumo em vez da certidão. Corrigido buscando por "visualizar" OU
 "certificado" em `a`, `button` e `input`.
+
+🔴 **Bug real confirmado em produção (14/09/2026), rodando no VPS**: o
+bloqueio por reputação de IP de datacenter descrito acima parece ter
+voltado — a migração pra VPS trocou a rede real do escritório de volta
+por um IP de nuvem. O worker recebeu uma página de bloqueio 403 (WAF) e,
+como o texto não batia com "regular"/"irregular", caía no "sucesso
+provável" padrão — reportando a própria página de erro como se fosse a
+certidão. Corrigido: texto não reconhecido nesse portal (sem captcha,
+sem estados intermediários) agora vira ERRO_TECNICO, não sucesso. A causa
+raiz (bloqueio de IP) continua em aberto — decisão de como contornar
+(worker nativo no Windows do escritório, como Receita Federal/SEFAZ-PR/
+Pinhais, ou fallback manual como o SEFAZ-PR) fica pra depois.
 """
 import asyncio
 import re
@@ -130,7 +142,20 @@ class FgtsCaixa(AutomacaoNodriverBase):
             return {"status": "irregular", "mensagem": "Empresa está IRREGULAR no FGTS."}
         if "regular" in texto_lower:
             return {"status": "regular", "mensagem": "Empresa está REGULAR no FGTS."}
-        return {"status": "resultado_indefinido", "mensagem": texto[:1000] or "Resultado não identificado."}
+        # ⚠️ Bug real confirmado em produção (14/09/2026, rodando no VPS):
+        # uma página de bloqueio 403 (WAF por reputação de IP de
+        # datacenter — mesmo motivo já documentado no topo do arquivo,
+        # provavelmente reaberto pela migração pro VPS) não bate com
+        # nenhum dos textos acima e caía no "sucesso provável" padrão —
+        # entregando a própria página de erro como se fosse a certidão.
+        # Texto não reconhecido nesse portal específico (sem captcha,
+        # sem estados intermediários) é sinal de algo errado, não de
+        # sucesso incerto.
+        return {
+            "status": "erro_tecnico",
+            "mensagem": "Resultado não reconhecido (provável bloqueio do portal, não confirmação de regularidade) "
+                         f"— confira a evidência. Início do texto: {texto[:300] or '(vazio)'}",
+        }
 
     async def _capturar_certidao(self, page, pedido: PedidoCertidao, pdfs_antes: set) -> str:
         # São DUAS telas em sequência, cada uma com AJAX (A4J.AJAX.Submit,
@@ -168,6 +193,8 @@ class FgtsCaixa(AutomacaoNodriverBase):
             return StatusPedido.SUCESSO_CONFIRMADO
         if status_emissao == "erro_portal":
             return StatusPedido.ERRO_PORTAL
+        if status_emissao == "erro_tecnico":
+            return StatusPedido.ERRO_TECNICO
         return StatusPedido.SUCESSO_PROVAVEL
 
 
