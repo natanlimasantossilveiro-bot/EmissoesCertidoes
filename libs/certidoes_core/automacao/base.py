@@ -74,29 +74,41 @@ class AutomacaoPortal(ABC):
 
             try:
                 resultado = await self.executar(pedido)
+                status_bruto = resultado.status
+                mensagem_bruta = resultado.mensagem
+                caminho_certidao = resultado.caminho_certidao
+                url_evidencia = resultado.url_evidencia
             except Exception as erro:
                 print(f"[{self.portal}] Erro técnico ao processar {pedido_id}: {erro}")
-                status_final = StatusPedido.ERRO_TECNICO
-                mensagem_final = str(erro)
-                if esgotou_tentativas and self.url_fallback_manual:
-                    status_final = StatusPedido.AGUARDANDO_MANUAL
-                    mensagem_final = self._texto_fallback_manual(pedido, mensagem_final)
-                pedido.status = status_final
-                pedido.mensagem = mensagem_final
-                session.commit()
-                return status_final != StatusPedido.ERRO_TECNICO
+                status_bruto = StatusPedido.ERRO_TECNICO
+                mensagem_bruta = str(erro)
+                caminho_certidao = ""
+                url_evidencia = ""
+            else:
+                print(f"[{self.portal}] Pedido {pedido_id} processado — status: {status_bruto.value}")
 
-            print(f"[{self.portal}] Pedido {pedido_id} processado — status: {resultado.status.value}")
-            status_final = resultado.status
-            mensagem_final = resultado.mensagem
-            if status_final == StatusPedido.ERRO_TECNICO and esgotou_tentativas and self.url_fallback_manual:
+            # Enquanto ainda houver retentativa automática programada (ver
+            # fila.py), o pedido continua "processando" pro usuário — gravar
+            # ERRO_TECNICO como se fosse definitivo, só pra a tentativa
+            # seguinte sobrescrever com SUCESSO_CONFIRMADO minutos depois, é
+            # mais confuso que informativo (gera o "processando → erro →
+            # sucesso" que aparece pro colaborador no painel). Só grava um
+            # status diferente de PROCESSANDO quando o resultado é
+            # definitivo (sucesso/erro de negócio) ou as tentativas
+            # realmente se esgotaram.
+            if status_bruto == StatusPedido.ERRO_TECNICO and not esgotou_tentativas:
+                return False
+
+            status_final = status_bruto
+            mensagem_final = mensagem_bruta
+            if status_final == StatusPedido.ERRO_TECNICO and self.url_fallback_manual:
                 status_final = StatusPedido.AGUARDANDO_MANUAL
                 mensagem_final = self._texto_fallback_manual(pedido, mensagem_final)
 
             pedido.status = status_final
             pedido.mensagem = mensagem_final
-            pedido.caminho_certidao = resultado.caminho_certidao
-            pedido.url_evidencia = resultado.url_evidencia
+            pedido.caminho_certidao = caminho_certidao
+            pedido.url_evidencia = url_evidencia
             session.commit()
 
         return status_final != StatusPedido.ERRO_TECNICO
