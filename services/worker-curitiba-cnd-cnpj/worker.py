@@ -14,10 +14,23 @@ da máscara com pontuação, mas só dígitos são enviados) e a URL
 (`/Certidao/SolicitarCnpj` em vez de `/Certidao/SolicitarCpf`).
 
 Como é a mesma plataforma, todos os bugs já corrigidos no worker de CPF
-(digitação com `digitar_devagar`, diálogo de certidão já existente,
-processamento assíncrono depois de "Gerar Nova Certidão", clique real no
-botão "Baixar" pra pegar o PDF de verdade em vez do fallback) já vêm
-aplicados aqui desde o início, sem precisar redescobrir nada.
+(digitação com `digitar_devagar`, processamento assíncrono depois de um
+clique, clique real no botão "Baixar" pra pegar o PDF de verdade em vez
+do fallback) já vêm aplicados aqui desde o início, sem precisar
+redescobrir nada.
+
+🔴 **Bug real confirmado em produção (14/09/2026), mesmo bug do worker de
+CPF antes de ser corrigido lá**: clicar "Gerar Nova Certidão" quando já
+existe certidão emitida pro CNPJ sempre falha (o portal só permite uma
+emissão por CNPJ) — vira "Aguardando processamento" preso ou Erro 404
+(reproduzido ao vivo com o CNPJ do próprio escritório, minutos depois de
+uma emissão bem-sucedida). Corrigido do mesmo jeito, confirmado por
+reconhecimento ao vivo (sem gastar nada): quando aparece o aviso de
+certidão existente, segue pra "Emitir Segunda Via"
+(`/Certidao/SegundaViaCnpj` — mesmo formulário `#DocumentoCnpj`/Altcha/
+`#btnSolicitar`, texto "Imprimir"), pega a certidão mais recente da
+listagem (`#tblListaCertidoes`) e baixa pelo mesmo modal
+Imprimir/Baixar/Fechar do fluxo principal. Ver `_emitir_segunda_via`.
 """
 import asyncio
 import re
@@ -36,6 +49,7 @@ UA_CHROME_REAL = (
 class CuritibaCndCnpj(AutomacaoNodriverBase):
     portal = "curitiba_cnd_cnpj"
     url_inicial = "https://cnd-cidadao.curitiba.pr.gov.br/Certidao/SolicitarCnpj"
+    url_segunda_via = "https://cnd-cidadao.curitiba.pr.gov.br/Certidao/SegundaViaCnpj"
     espera_inicial_segundos = 4
     # Mesmo ajuste do worker de CPF/FGTS/MPF: o Akamai bloqueia o Chromium
     # headless pelo User-Agent, não por IP.
@@ -53,11 +67,14 @@ class CuritibaCndCnpj(AutomacaoNodriverBase):
         await page.wait(1)
 
         await self._clicar_gerar_certidao(page)
-        await self._tratar_aviso_certidao_existente(page)
-        # Mesma correção do worker de CPF/Imóvel (mesma plataforma): depois
-        # de "Gerar Nova Certidão", o site processa de forma assíncrona —
-        # interpretar cedo demais pega esse processamento no meio do
-        # caminho, às vezes como um "Erro 404" transitório.
+
+        if await self._aviso_certidao_existente_apareceu(page):
+            return await self._emitir_segunda_via(page, pedido, pdfs_antes)
+
+        # Mesma correção do worker de CPF/Imóvel (mesma plataforma): o site
+        # processa de forma assíncrona — interpretar cedo demais pega esse
+        # processamento no meio do caminho, às vezes como um "Erro 404"
+        # transitório.
         await self._aguardar_processamento_finalizar(page)
         await page.wait(2)
 
@@ -80,6 +97,17 @@ class CuritibaCndCnpj(AutomacaoNodriverBase):
             caminho_certidao = await self.aguardar_e_mover_pdf(pedido, pdfs_antes, tentativas=20)
             if not caminho_certidao:
                 await self._aguardar_processamento_finalizar(page)
+                # Mesmo bug corrigido no worker de CPF: confere se a página
+                # ainda mostra o resultado antes de aceitar o print como
+                # certidão válida (senão pode gravar SUCESSO com um PDF do
+                # formulário vazio, se a página já tiver voltado sozinha).
+                if not await self._pagina_ainda_mostra_resultado(page):
+                    return ResultadoEmissao(
+                        status=StatusPedido.ERRO_TECNICO,
+                        mensagem="O portal confirmou a certidão, mas a página voltou ao formulário inicial antes de "
+                                 "conseguirmos capturar o arquivo final — tente novamente.",
+                        caminho_certidao="",
+                    )
                 caminho_certidao = await self.salvar_pagina_como_pdf(page, pedido)
 
         return ResultadoEmissao(
@@ -114,26 +142,103 @@ class CuritibaCndCnpj(AutomacaoNodriverBase):
             })()
         """)
 
-    async def _tratar_aviso_certidao_existente(self, page, tentativas: int = 8):
-        # Se já existe uma certidão emitida recentemente pro mesmo CNPJ, o
-        # site mostra um diálogo "Já existe certidão Emitida para este
-        # CNPJ" com botões "Visualizar"/"Gerar Nova Certidão" em vez de
-        # gerar direto. Clica "Gerar Nova Certidão" pra sempre conseguir
-        # uma via nova. Polling porque o diálogo pode demorar mais que o
-        # esperado pra aparecer (mesmo bug já visto no worker de CPF).
+    async def _aviso_certidao_existente_apareceu(self, page, tentativas: int = 8) -> bool:
+        """Detecta (sem clicar em nada) se o diálogo "Já existe certidão
+        Emitida para este CNPJ" apareceu. ⚠️ Pedir uma via nova nesse caso
+        sempre falha nesse portal — o caminho certo é `_emitir_segunda_via`.
+        Polling porque o diálogo pode demorar mais que o esperado pra
+        aparecer."""
         for _ in range(tentativas):
-            clicou = await page.evaluate("""
+            existe = await page.evaluate("""
                 (() => {
                     const botoes = Array.from(document.querySelectorAll('button, a'));
-                    const botao = botoes.find(b => (b.innerText || '').trim() === 'Gerar Nova Certidão');
-                    if (botao) { botao.click(); return true; }
-                    return false;
+                    return botoes.some(b => (b.innerText || '').trim() === 'Gerar Nova Certidão');
                 })()
             """)
-            if clicou:
-                await page.wait(1)
-                return
+            if existe:
+                return True
             await page.wait(1)
+        return False
+
+    async def _emitir_segunda_via(self, page, pedido: PedidoCertidao, pdfs_antes: set) -> ResultadoEmissao:
+        """Já existe certidão emitida recentemente pro CNPJ — recupera a
+        última via já emitida pela tela "Emitir Segunda Via", em vez de
+        tentar gerar uma nova (que sempre falha). Mesma estrutura do
+        worker de CPF, confirmada por reconhecimento ao vivo em 14/09/2026."""
+        await page.get(self.url_segunda_via)
+        await page.wait(3)
+
+        campo = await page.select("#DocumentoCnpj")
+        digitos = re.sub(r"\D", "", pedido.documento or "")
+        await self.digitar_devagar(campo, digitos)
+        await page.wait(1)
+
+        await self._resolver_altcha(page)
+        await page.wait(1)
+
+        await self._clicar_gerar_certidao(page)  # mesmo #btnSolicitar, texto "Imprimir" aqui
+
+        if not await self._aguardar_listagem_segunda_via(page):
+            return ResultadoEmissao(
+                status=StatusPedido.ERRO_TECNICO,
+                mensagem="Já existe certidão emitida pra esse CNPJ, mas a listagem da segunda via não carregou.",
+                caminho_certidao="",
+            )
+
+        await self._clicar_primeira_certidao_listagem(page)
+        await page.wait(2)
+        await self._clicar_baixar_certidao(page)
+        await self._aguardar_processamento_finalizar(page)
+
+        caminho_certidao = await self.aguardar_e_mover_pdf(pedido, pdfs_antes, tentativas=15)
+        if not caminho_certidao:
+            if not await self._pagina_ainda_mostra_resultado(page):
+                return ResultadoEmissao(
+                    status=StatusPedido.ERRO_TECNICO,
+                    mensagem="Já existe certidão emitida pra esse CNPJ, mas não foi possível capturar o arquivo da "
+                             "segunda via — tente novamente.",
+                    caminho_certidao="",
+                )
+            caminho_certidao = await self.salvar_pagina_como_pdf(page, pedido)
+
+        return ResultadoEmissao(
+            status=StatusPedido.SUCESSO_CONFIRMADO,
+            mensagem="Certidão recuperada via 'Emitir Segunda Via' (já existia uma emissão recente pra esse CNPJ).",
+            caminho_certidao=caminho_certidao,
+        )
+
+    async def _aguardar_listagem_segunda_via(self, page, tentativas: int = 15) -> bool:
+        for _ in range(tentativas):
+            existe = await page.evaluate("""
+                (() => !!document.querySelector('#tblListaCertidoes tbody tr td button[data-action="imprimir"]'))()
+            """)
+            if existe:
+                return True
+            await page.wait(1)
+        return False
+
+    async def _clicar_primeira_certidao_listagem(self, page):
+        await page.evaluate("""
+            (() => {
+                const botao = document.querySelector('#tblListaCertidoes tbody tr td button[data-action="imprimir"]');
+                if (botao) botao.click();
+            })()
+        """)
+
+    async def _pagina_ainda_mostra_resultado(self, page) -> bool:
+        """Mesmos padrões de texto usados em `_interpretar_resultado` pra
+        confirmar sucesso — reaproveitados aqui só pra checar se a página
+        ainda está no mesmo estado (não voltou pro formulário inicial)
+        antes de aceitar um print de fallback como certidão válida."""
+        texto = await page.evaluate("(() => document.body.innerText)()")
+        texto_lower = (texto or "").lower()
+        return (
+            "não existir pendênc" in texto_lower
+            or "existir pendênc" in texto_lower
+            or "certidão negativa" in texto_lower
+            or "certidão positiva" in texto_lower
+            or ("imprimir" in texto_lower and "baixar" in texto_lower)
+        )
 
     async def _aguardar_processamento_finalizar(self, page, tentativas: int = 15):
         for _ in range(tentativas):
