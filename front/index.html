@@ -134,6 +134,11 @@
     letter-spacing: .03em; color: var(--text-muted); margin: 10px 0 4px;
   }
   .portais-lista .grupo-titulo:first-child { margin-top: 0; }
+  .portais-lista .subgrupo-titulo {
+    font-size: .68rem; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .02em; color: var(--text-muted); opacity: .75;
+    margin: 6px 0 2px 10px;
+  }
   .portal-item {
     display: flex; align-items: center; gap: 8px; padding: 5px 2px;
     font-size: .85rem; cursor: pointer;
@@ -656,6 +661,16 @@ const GRUPO_DOCUMENTO_POR_PORTAL = {
 };
 const TITULO_GRUPO = { cpf_cnpj: "CPF / CNPJ", imovel: "Indicação Fiscal (imóvel)" };
 
+// Dentro do grupo CPF/CNPJ, subdivide em 3 níveis (a pedido do usuário,
+// pra deixar visualmente óbvio quais portais são restritos, em vez de só
+// um sufixo "(somente PF)" fácil de não notar no meio da lista):
+// 1) só aceita CPF, 2) só aceita CNPJ, 3) aceita os dois (campo "Tipo").
+const TITULO_SUBGRUPO_CPF_CNPJ = {
+  pf: "Somente CPF (Pessoa Física)",
+  pj: "Somente CNPJ (Pessoa Jurídica)",
+  ambos: "CPF ou CNPJ",
+};
+
 // Alguns portais do grupo "cpf_cnpj" na verdade só funcionam com UM dos
 // dois tipos (o site rejeita o outro) — mas o agrupamento em si permite
 // selecionar qualquer um, então nada impedia de mandar CNPJ pra um
@@ -665,8 +680,18 @@ const TITULO_GRUPO = { cpf_cnpj: "CPF / CNPJ", imovel: "Indicação Fiscal (imó
 // 14 dígitos pra caber num formato de CPF. Isso aqui só documenta a
 // restrição pra validar antes de enviar (ver função abaixo) — não
 // precisa adicionar toda vez que um portal aceitar os dois tipos.
+// Auditoria de 14/09/2026 (services/worker-*/worker.py de cada portal):
+// cpf_situacao_cadastral e cnpj_qsa também são restritos por natureza do
+// próprio site (um único campo genérico, sem alternância PF/PJ no
+// código) — só não estavam documentados aqui ainda. fgts_caixa também é
+// travado, mas no código do WORKER (sempre seleciona CNPJ no formulário
+// da Caixa, ver services/worker-fgts-caixa/worker.py), não por falta de
+// campo no site.
 const TIPO_DOCUMENTO_RESTRITO_POR_PORTAL = {
+  cpf_situacao_cadastral: "pf",
   curitiba_cnd_cpf: "pf",
+  cnpj_qsa: "pj",
+  fgts_caixa: "pj",
   curitiba_cnd_cnpj: "pj",
 };
 
@@ -797,25 +822,48 @@ function renderizarListaPortais(containerId, portais) {
   }
   const container = el(containerId);
   container.innerHTML = "";
-  for (const grupo of ["cpf_cnpj", "imovel"]) {
-    if (grupos[grupo].length === 0) continue;
+
+  const renderizarTitulo = (texto, classe) => {
     const titulo = document.createElement("div");
-    titulo.className = "grupo-titulo";
-    titulo.textContent = TITULO_GRUPO[grupo];
+    titulo.className = classe;
+    titulo.textContent = texto;
     container.appendChild(titulo);
-    for (const { chave, label } of grupos[grupo]) {
-      const info = STATUS_PORTAL[chave] || { nivel: "teste", texto: "Status ainda não catalogado" };
-      const restricao = TIPO_DOCUMENTO_RESTRITO_POR_PORTAL[chave];
-      const sufixoRestricao = restricao ? ` (somente ${restricao.toUpperCase()})` : "";
-      const item = document.createElement("label");
-      item.className = "portal-item";
-      item.title = info.texto;
-      item.innerHTML = `
-        <input type="checkbox" value="${chave}" data-grupo="${grupo}">
-        <span>${label}${sufixoRestricao}</span>
-      `;
-      container.appendChild(item);
+  };
+
+  const renderizarItem = (grupo, chave, label) => {
+    // Sem sufixo "(somente PF/PJ)" aqui — o subtítulo do subgrupo (ver
+    // TITULO_SUBGRUPO_CPF_CNPJ) já comunica isso pros portais do grupo
+    // CPF/CNPJ, sem repetir no nome de cada item.
+    const info = STATUS_PORTAL[chave] || { nivel: "teste", texto: "Status ainda não catalogado" };
+    const item = document.createElement("label");
+    item.className = "portal-item";
+    item.title = info.texto;
+    item.innerHTML = `
+      <input type="checkbox" value="${chave}" data-grupo="${grupo}">
+      <span>${label}</span>
+    `;
+    container.appendChild(item);
+  };
+
+  if (grupos.cpf_cnpj.length > 0) {
+    renderizarTitulo(TITULO_GRUPO.cpf_cnpj, "grupo-titulo");
+    // Subdivide em 3 níveis (só CPF / só CNPJ / os dois) — ver
+    // TITULO_SUBGRUPO_CPF_CNPJ acima.
+    const subgrupos = { pf: [], pj: [], ambos: [] };
+    for (const item of grupos.cpf_cnpj) {
+      const restricao = TIPO_DOCUMENTO_RESTRITO_POR_PORTAL[item.chave];
+      subgrupos[restricao === "pf" || restricao === "pj" ? restricao : "ambos"].push(item);
     }
+    for (const nivel of ["pf", "pj", "ambos"]) {
+      if (subgrupos[nivel].length === 0) continue;
+      renderizarTitulo(TITULO_SUBGRUPO_CPF_CNPJ[nivel], "subgrupo-titulo");
+      for (const { chave, label } of subgrupos[nivel]) renderizarItem("cpf_cnpj", chave, label);
+    }
+  }
+
+  if (grupos.imovel.length > 0) {
+    renderizarTitulo(TITULO_GRUPO.imovel, "grupo-titulo");
+    for (const { chave, label } of grupos.imovel) renderizarItem("imovel", chave, label);
   }
 }
 

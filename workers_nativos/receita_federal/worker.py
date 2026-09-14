@@ -104,7 +104,7 @@ class CertidaoConjunta(AutomacaoNodriverBase):
         await self._aceitar_cookies_se_existir(page)
 
         await self._selecionar_tipo_certidao(page, pedido.tipo)
-        if pedido.tipo == "pf":
+        if (pedido.tipo or "").lower() == "pf":
             await self._preencher_dados_pf(page, pedido.documento, pedido.data_nascimento or "")
         else:
             await self._preencher_dados_pj(page, pedido.documento)
