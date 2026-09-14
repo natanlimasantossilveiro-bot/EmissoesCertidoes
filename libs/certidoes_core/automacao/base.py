@@ -11,6 +11,7 @@ capturar evidência quando não for sucesso confirmado". Cada portal
 concreto herda da camada de plataforma certa e implementa só a automação
 específica dele.
 """
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
@@ -40,6 +41,18 @@ class AutomacaoPortal(ABC):
     # garantida (bloqueio por fingerprint avançado, não IP/SO). Default
     # None preserva o comportamento atual (DLQ) pra todo o resto.
     url_fallback_manual: str | None = None
+
+    # Opt-in por portal concreto (ex: worker-tst-cndt). Quando setado,
+    # `executar()` é cancelado se passar desse tempo sem terminar — vira
+    # ERRO_TECNICO igual a qualquer outra falha técnica (mesmo ciclo de
+    # retentativa/DLQ), em vez de travar a fila pra sempre (prefetch=1
+    # significa que uma automação travada sem exceção nenhuma — nodriver
+    # esperando um elemento que nunca aparece, por exemplo — nunca dá
+    # ack/nack, e nenhum pedido novo desse portal é processado até
+    # alguém perceber e reiniciar o container manualmente; confirmado em
+    # produção em 14/09/2026 no TST CNDT). Default None preserva o
+    # comportamento atual (sem limite) pra todo o resto.
+    timeout_execucao_segundos: int | None = None
 
     @abstractmethod
     async def executar(self, pedido: PedidoCertidao) -> ResultadoEmissao:
@@ -73,11 +86,26 @@ class AutomacaoPortal(ABC):
             esgotou_tentativas = tentativa >= config.MAX_TENTATIVAS
 
             try:
-                resultado = await self.executar(pedido)
+                if self.timeout_execucao_segundos:
+                    resultado = await asyncio.wait_for(
+                        self.executar(pedido), timeout=self.timeout_execucao_segundos
+                    )
+                else:
+                    resultado = await self.executar(pedido)
                 status_bruto = resultado.status
                 mensagem_bruta = resultado.mensagem
                 caminho_certidao = resultado.caminho_certidao
                 url_evidencia = resultado.url_evidencia
+            except asyncio.TimeoutError:
+                print(f"[{self.portal}] Pedido {pedido_id} excedeu {self.timeout_execucao_segundos}s "
+                      f"sem terminar — provável travamento, cancelando.")
+                status_bruto = StatusPedido.ERRO_TECNICO
+                mensagem_bruta = (
+                    f"Automação excedeu o limite de {self.timeout_execucao_segundos}s sem terminar — "
+                    f"provável travamento técnico, não erro do documento."
+                )
+                caminho_certidao = ""
+                url_evidencia = ""
             except Exception as erro:
                 print(f"[{self.portal}] Erro técnico ao processar {pedido_id}: {erro}")
                 status_bruto = StatusPedido.ERRO_TECNICO

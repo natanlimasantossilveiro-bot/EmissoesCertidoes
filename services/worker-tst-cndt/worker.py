@@ -60,6 +60,14 @@ from certidoes_core.automacao.nodriver_base import AutomacaoNodriverBase
 class TstCndt(AutomacaoNodriverBase):
     portal = "tst_cndt"
     url_inicial = "https://cndt-certidao.tst.jus.br/"
+    # Confirmado em produção (14/09/2026): esse worker travou de vez em
+    # quando dentro do navegador sem nunca dar erro nem sucesso, ocupando
+    # pra sempre o único slot de processamento da fila (prefetch=1) e
+    # bloqueando qualquer pedido novo até alguém perceber e reiniciar o
+    # container manualmente. Timeout opt-in (ver AutomacaoPortal) cancela
+    # e trata como ERRO_TECNICO — mesmo ciclo de retentativa/DLQ de
+    # qualquer outra falha — em vez de travar a fila pra sempre.
+    timeout_execucao_segundos = 300
 
     async def preencher_e_emitir(self, page, pedido: PedidoCertidao) -> ResultadoEmissao:
         pdfs_antes = self._listar_pdfs_downloads()
