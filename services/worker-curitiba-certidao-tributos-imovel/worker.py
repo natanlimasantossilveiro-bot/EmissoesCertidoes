@@ -244,7 +244,11 @@ class CuritibaCertidaoTributosImovel(AutomacaoNodriverBase):
                 "status": "erro_tecnico",
                 "mensagem": "Portal ficou preso em \"Aguardando processamento\" sem responder — confira se o Documento do Proprietário está num formato válido, ou se é limite de repetição pro mesmo dado testado várias vezes seguidas.",
             }
-        return {"status": "resultado_indefinido", "mensagem": texto[:1000] or "Resultado não identificado."}
+        # ⚠️ Corrigido (auditoria de 17/09/2026): nenhum sinal reconhecido
+        # (nem certidão, nem erro catalogado, nem spinner) — provável
+        # bloqueio/mudança no site, não sucesso. Antes caía no "sucesso
+        # provável" padrão de _determinar_status_final.
+        return {"status": "erro_tecnico", "mensagem": texto[:1000] or "Resultado não identificado (página sem conteúdo reconhecível)."}
 
     @staticmethod
     def _determinar_status_final(status_emissao: str) -> StatusPedido:

@@ -193,11 +193,13 @@ class CuritibaConsultaDebitosDividaAtiva(AutomacaoNodriverBase):
         if "débito" in texto_lower and ("valor" in texto_lower or "inscrição" in texto_lower):
             return {"status": "consulta_com_debitos", "mensagem": "Consulta realizada — débito(s) encontrado(s)."}
 
-        # Formulário provavelmente ainda na tela, sem erro de captcha
-        # reconhecido — não arriscamos adivinhar (ex: Indicação Fiscal não
-        # encontrada). Evidência automática garante o print pro humano
-        # conferir.
-        return {"status": "resultado_indefinido", "mensagem": texto[:1000] or "Resultado não identificado."}
+        # ⚠️ Corrigido (auditoria de 17/09/2026): formulário provavelmente
+        # ainda na tela, sem erro de captcha reconhecido (ex: Indicação
+        # Fiscal não encontrada, bloqueio, mudança no site). Antes caía em
+        # "sucesso provável" (a ideia era "evidência automática garante o
+        # print pro humano conferir", mas isso reporta bloqueio/timeout como
+        # sucesso, não erro). Erro técnico, disponível pra nova tentativa.
+        return {"status": "erro_tecnico", "mensagem": texto[:1000] or "Resultado não identificado (página sem conteúdo reconhecível)."}
 
     @staticmethod
     def _determinar_status_final(status_emissao: str) -> StatusPedido:
@@ -207,6 +209,8 @@ class CuritibaConsultaDebitosDividaAtiva(AutomacaoNodriverBase):
             return StatusPedido.ERRO_TECNICO
         if status_emissao == "erro_portal":
             return StatusPedido.ERRO_PORTAL
+        if status_emissao == "erro_tecnico":
+            return StatusPedido.ERRO_TECNICO
         return StatusPedido.SUCESSO_PROVAVEL
 
 

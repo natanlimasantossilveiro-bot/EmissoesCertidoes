@@ -251,12 +251,14 @@ class CuritibaCertidaoCadastroImovel(AutomacaoNodriverBase):
         if "declaração unificada de cadastro de imóvel" in texto_lower and "identificação do imóvel" in texto_lower:
             return {"status": "certidao_emitida", "mensagem": "Declaração de cadastro de imóvel emitida."}
 
-        # Formulário ainda presente, sem erro de captcha reconhecido — pode
-        # ser Indicação Fiscal não encontrada ou outro erro do portal ainda
-        # não catalogado. Não arriscamos adivinhar o texto: cai pra
-        # sucesso_provável (evidência automática garante o print pro humano
-        # conferir).
-        return {"status": "resultado_indefinido", "mensagem": texto[:1000] or "Resultado não identificado."}
+        # ⚠️ Corrigido (auditoria de 17/09/2026): formulário ainda presente,
+        # sem erro de captcha reconhecido — pode ser Indicação Fiscal não
+        # encontrada, bloqueio ou outro erro do portal ainda não catalogado.
+        # Antes caía em "sucesso provável" (a justificativa era "evidência
+        # automática garante o print pro humano conferir", mas isso reporta
+        # qualquer bloqueio/timeout como sucesso, não erro). Erro técnico,
+        # disponível pra nova tentativa.
+        return {"status": "erro_tecnico", "mensagem": texto[:1000] or "Resultado não identificado (página sem conteúdo reconhecível)."}
 
     @staticmethod
     def _determinar_status_final(status_emissao: str) -> StatusPedido:
@@ -266,6 +268,8 @@ class CuritibaCertidaoCadastroImovel(AutomacaoNodriverBase):
             return StatusPedido.ERRO_TECNICO
         if status_emissao == "erro_portal":
             return StatusPedido.ERRO_PORTAL
+        if status_emissao == "erro_tecnico":
+            return StatusPedido.ERRO_TECNICO
         return StatusPedido.SUCESSO_PROVAVEL
 
 
