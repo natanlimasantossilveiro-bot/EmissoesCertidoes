@@ -116,9 +116,24 @@ class TrfCertidaoJudicial(AutomacaoNodriverBase):
             # `page.find(...).click()` (carrega `user_gesture=True` no
             # CDP), deixando o próprio JS do site resolver o caminho.
             botao = await self._achar_botao_visualizar(page)
-            if botao:
-                await botao.click()
-                await page.wait(3)
+            if not botao:
+                # ⚠️ Bug real (auditoria de 17/09/2026): `_interpretar_resultado`
+                # marca sucesso só por o formulário ter "saído da tela" —
+                # mas isso também é verdade se uma página de bloqueio/erro
+                # tiver substituído a tela inteira. Sem esse botão de
+                # confirmação real, não tem como validar que chegamos na
+                # tela certa; aceitar o que estiver na tela (via
+                # salvar_pagina_como_pdf) já causou falso "sucesso" com
+                # página de erro nesse mesmo padrão em outro worker.
+                return ResultadoEmissao(
+                    status=StatusPedido.ERRO_TECNICO,
+                    mensagem="Formulário saiu de tela, mas o botão \"Visualizar Certidão Gerada\" não apareceu — "
+                             "não foi possível confirmar a emissão. Tente novamente.",
+                    caminho_certidao="",
+                )
+
+            await botao.click()
+            await page.wait(3)
 
             # ⚠️ Bug real encontrado em teste real (repetido em pedidos
             # diferentes, mesmo com o clique nativo): esse clique às vezes
@@ -241,7 +256,10 @@ class TrfCertidaoJudicial(AutomacaoNodriverBase):
         if saiu_do_formulario:
             return {"status": "certidao_emitida", "mensagem": "Certidão emitida (sem mensagem de erro na tela)."}
 
-        return {"status": "resultado_indefinido", "mensagem": "Resultado não identificado — formulário ainda presente na tela, sem erro visível."}
+        # ⚠️ Bug real (auditoria de 17/09/2026): esse caso caía em "sucesso
+        # provável" por padrão — mas o formulário ainda estar na tela, sem
+        # nenhuma mensagem de erro, não é sinal de sucesso nenhum.
+        return {"status": "erro_tecnico", "mensagem": "Resultado não identificado — formulário ainda presente na tela, sem erro visível."}
 
     @staticmethod
     def _determinar_status_final(status_emissao: str) -> StatusPedido:
@@ -251,6 +269,8 @@ class TrfCertidaoJudicial(AutomacaoNodriverBase):
             return StatusPedido.ERRO_TECNICO
         if status_emissao == "erro_portal":
             return StatusPedido.ERRO_PORTAL
+        if status_emissao == "erro_tecnico":
+            return StatusPedido.ERRO_TECNICO
         return StatusPedido.SUCESSO_PROVAVEL
 
 

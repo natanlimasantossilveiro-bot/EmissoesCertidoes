@@ -96,7 +96,19 @@ class TstCndt(AutomacaoNodriverBase):
         if status_final in (StatusPedido.SUCESSO_CONFIRMADO, StatusPedido.SUCESSO_PROVAVEL):
             caminho_certidao = await self.aguardar_e_mover_pdf(pedido, pdfs_antes, tentativas=15)
             if not caminho_certidao:
-                caminho_certidao = await self.salvar_pagina_como_pdf(page, pedido)
+                # ⚠️ Bug real (auditoria de 17/09/2026): o PDF de verdade só
+                # sai via download automático disparado pelo próprio site
+                # (ver aviso no topo do arquivo) — um print de fallback aqui
+                # captura só a tela de confirmação com botões, não a
+                # certidão (mesmo problema já confirmado no worker do MPF).
+                # Erro técnico (disponível pra nova tentativa) em vez de
+                # entregar um PDF que não é o documento certo.
+                return ResultadoEmissao(
+                    status=StatusPedido.ERRO_TECNICO,
+                    mensagem="O portal não mostrou erro, mas o PDF esperado não foi baixado automaticamente — "
+                             "tente novamente.",
+                    caminho_certidao="",
+                )
 
         return ResultadoEmissao(
             status=status_final,
@@ -175,17 +187,28 @@ class TstCndt(AutomacaoNodriverBase):
         if "débito" in mensagem_lower and ("possui" in mensagem_lower or "consta" in mensagem_lower):
             return {"status": "certidao_positiva", "mensagem": mensagem}
         if not mensagem:
-            # Sem mensagem de erro visível — provável sucesso (PDF deve ter
-            # baixado nativamente; aguardar_e_mover_pdf confirma isso).
-            return {"status": "certidao_emitida", "mensagem": "Certidão emitida (sem mensagem de erro na tela)."}
-        return {"status": "resultado_indefinido", "mensagem": mensagem}
+            # ⚠️ Bug real (auditoria de 17/09/2026): "sem mensagem de erro"
+            # incluía o caso de `#mensagens` nem existir mais na página
+            # (ex: bloqueio substituindo a tela inteira) — `el ?
+            # el.innerText : ''` devolve vazio nos dois casos, e isso
+            # virava SUCESSO_CONFIRMADO direto, sem nenhuma confirmação
+            # real. Rebaixado pra status próprio (sucesso PROVÁVEL, não
+            # confirmado) — a confirmação de verdade só vem depois, quando
+            # o PDF baixado automaticamente aparecer (ou não) em
+            # `aguardar_e_mover_pdf`, ver preencher_e_emitir.
+            return {"status": "sem_mensagem_erro", "mensagem": "Nenhuma mensagem de erro na tela — aguardando confirmação pelo PDF baixado."}
+        return {"status": "erro_tecnico", "mensagem": mensagem}
 
     @staticmethod
     def _determinar_status_final(status_emissao: str) -> StatusPedido:
-        if status_emissao in ("certidao_emitida", "certidao_positiva"):
+        if status_emissao == "certidao_positiva":
             return StatusPedido.SUCESSO_CONFIRMADO
+        if status_emissao == "sem_mensagem_erro":
+            return StatusPedido.SUCESSO_PROVAVEL
         if status_emissao == "erro_portal":
             return StatusPedido.ERRO_PORTAL
+        if status_emissao == "erro_tecnico":
+            return StatusPedido.ERRO_TECNICO
         return StatusPedido.SUCESSO_PROVAVEL
 
 

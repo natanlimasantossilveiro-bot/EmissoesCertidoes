@@ -236,7 +236,13 @@ class MpfCertidaoNegativa(AutomacaoNodriverBase):
             return {"status": "nome_encontrado", "mensagem": "Nome/razão social localizado."}
         if "falha na solicitação" in texto_lower or "inválido" in texto_lower:
             return {"status": "erro_portal", "mensagem": "O MPF recusou a consulta — confira o documento informado."}
-        return {"status": "resultado_indefinido", "mensagem": "Não foi possível confirmar o nome/razão social."}
+        # ⚠️ Bug real (auditoria de 17/09/2026): texto não reconhecido aqui
+        # (ex: página de bloqueio do WAF) caía no "sucesso provável" padrão
+        # de _determinar_status_final, sem nenhum arquivo — pior ainda,
+        # `preencher_e_emitir` retorna direto nesse caso (nem chega a
+        # tentar emitir/baixar nada). Erro técnico é mais seguro que
+        # assumir sucesso sem nenhuma confirmação nem PDF.
+        return {"status": "erro_tecnico", "mensagem": f"Não foi possível confirmar o nome/razão social. Texto da página: {texto[:500]}"}
 
     async def _clicar_emitir(self, page):
         await page.evaluate("""
@@ -253,7 +259,10 @@ class MpfCertidaoNegativa(AutomacaoNodriverBase):
             return {"status": "certidao_emitida", "mensagem": "Certidão negativa do MPF gerada com sucesso."}
         texto = await page.evaluate("(() => document.body.innerText)()")
         texto = texto.strip() if isinstance(texto, str) else ""
-        return {"status": "resultado_indefinido", "mensagem": texto[:1000] or "Resultado da emissão não identificado."}
+        # ⚠️ Mesmo bug do _interpretar_consulta acima: sem o botão de
+        # download, não tem confirmação nenhuma de que a certidão saiu —
+        # erro técnico em vez de "sucesso provável" sem arquivo.
+        return {"status": "erro_tecnico", "mensagem": texto[:1000] or "Resultado da emissão não identificado (página sem conteúdo reconhecível)."}
 
     async def _baixar_certidao_via_fetch(self, page, pedido: PedidoCertidao) -> str:
         # Evita clicar no `<a download>` (ver aviso no topo do arquivo —
@@ -313,6 +322,8 @@ class MpfCertidaoNegativa(AutomacaoNodriverBase):
             return StatusPedido.SUCESSO_CONFIRMADO
         if status_emissao == "erro_portal":
             return StatusPedido.ERRO_PORTAL
+        if status_emissao == "erro_tecnico":
+            return StatusPedido.ERRO_TECNICO
         return StatusPedido.SUCESSO_PROVAVEL
 
 
