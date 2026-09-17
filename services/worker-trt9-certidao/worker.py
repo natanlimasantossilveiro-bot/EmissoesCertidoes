@@ -221,16 +221,25 @@ class Trt9CertidaoTrabalhista(AutomacaoNodriverBase):
         # de repetir o texto de carregamento sem contexto.
         if "aguarde" in texto_lower:
             return {
-                "status": "resultado_indefinido",
+                "status": "aguarde_persistente",
                 "mensagem": "O TRT9 demorou mais que o esperado pra confirmar visualmente o resultado — confira o PDF anexado, que geralmente já traz a certidão certa.",
             }
-        return {"status": "resultado_indefinido", "mensagem": texto[:1000] or "Resultado não identificado."}
+        # ⚠️ Corrigido (auditoria de 17/09/2026): esse era o mesmo status
+        # "resultado_indefinido" do caso "aguarde" acima (ambos viravam
+        # sucesso provável) — mas aqui não há nenhum sinal, nem de sucesso
+        # nem do "aguarde" documentado e já validado; é conteúdo realmente
+        # não reconhecido (bloqueio, mudança no site, página em branco).
+        return {"status": "erro_tecnico", "mensagem": texto[:1000] or "Resultado não identificado (página sem conteúdo reconhecível)."}
 
     @staticmethod
     def _determinar_status_final(status_emissao: str) -> StatusPedido:
         if status_emissao == "certidao_emitida":
             return StatusPedido.SUCESSO_CONFIRMADO
+        if status_emissao == "aguarde_persistente":
+            return StatusPedido.SUCESSO_PROVAVEL
         if status_emissao == "erro_captcha":
+            return StatusPedido.ERRO_TECNICO
+        if status_emissao == "erro_tecnico":
             return StatusPedido.ERRO_TECNICO
         return StatusPedido.SUCESSO_PROVAVEL
 
