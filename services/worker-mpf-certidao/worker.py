@@ -117,6 +117,11 @@ class MpfCertidaoNegativa(AutomacaoNodriverBase):
         "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
     ]
+    # Mesma proteção genérica aplicada no TST CNDT (17/09/2026, ver
+    # AutomacaoPortal): cancela e vira ERRO_TECNICO se travar sem
+    # terminar, em vez de bloquear pra sempre o único slot da fila
+    # (prefetch=1) até alguém perceber e reiniciar o container manualmente.
+    timeout_execucao_segundos = 300
 
     async def preencher_e_emitir(self, page, pedido: PedidoCertidao) -> ResultadoEmissao:
         await self._clicar_emitir_certidao(page)

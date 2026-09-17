@@ -62,6 +62,11 @@ class CnpjQsa(AutomacaoNodriverBase):
     url_inicial = "https://solucoes.receita.fazenda.gov.br/servicos/cnpjreva/cnpjreva_solicitacao.asp"
     espera_inicial_segundos = 5  # SPA Angular, leva mais tempo pra montar do que páginas estáticas
     usar_hook_hcaptcha_callback = True  # Angular só reconhece o captcha via callback, não via textarea
+    # Mesma proteção genérica aplicada no TST CNDT (17/09/2026, ver
+    # AutomacaoPortal): cancela e vira ERRO_TECNICO se travar sem
+    # terminar, em vez de bloquear pra sempre o único slot da fila
+    # (prefetch=1) até alguém perceber e reiniciar o container manualmente.
+    timeout_execucao_segundos = 300
 
     async def preencher_e_emitir(self, page, pedido: PedidoCertidao) -> ResultadoEmissao:
         pdfs_antes = self._listar_pdfs_downloads()

@@ -111,6 +111,12 @@ from certidoes_core.automacao.nodriver_base import AutomacaoNodriverBase
 class CuritibaGuiaAmarela(AutomacaoNodriverBase):
     portal = "curitiba_guia_amarela"
     url_inicial = "http://www5.curitiba.pr.gov.br/gtm/gam/Default.aspx"
+    # Mesma proteção genérica aplicada no TST CNDT (17/09/2026, ver
+    # AutomacaoPortal): cancela e vira ERRO_TECNICO se travar sem
+    # terminar, em vez de bloquear pra sempre o único slot da fila
+    # (prefetch=1). Complementa (não substitui) os timeouts internos já
+    # existentes em preencher_e_emitir (interpretação/download, 20s cada).
+    timeout_execucao_segundos = 300
 
     async def preencher_e_emitir(self, page, pedido: PedidoCertidao) -> ResultadoEmissao:
         pdfs_antes = self._listar_pdfs_downloads()

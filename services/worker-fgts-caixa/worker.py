@@ -62,6 +62,11 @@ class FgtsCaixa(AutomacaoNodriverBase):
     portal = "fgts_caixa"
     url_inicial = "https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf"
     espera_inicial_segundos = 4
+    # Mesma proteção genérica aplicada no TST CNDT (17/09/2026, ver
+    # AutomacaoPortal): cancela e vira ERRO_TECNICO se travar sem
+    # terminar, em vez de bloquear pra sempre o único slot da fila
+    # (prefetch=1) até alguém perceber e reiniciar o container manualmente.
+    timeout_execucao_segundos = 300
     # Confirmado num teste real: o ShieldSquare/Radware bloqueava citando
     # literalmente "HeadlessChrome/149.0.0.0" no corpo da página de
     # bloqueio — ou seja, o próprio Chromium headless denuncia a

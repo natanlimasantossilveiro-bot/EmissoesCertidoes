@@ -82,6 +82,11 @@ TIPO_CERTIDAO_PARA_CODIGO = {
 class TrfCertidaoJudicial(AutomacaoNodriverBase):
     portal = "trf4_certidao_civel_criminal"
     url_inicial = "https://www2.trf4.jus.br/trf4/processos/certidao/index.php"
+    # Mesma proteção genérica aplicada no TST CNDT (17/09/2026, ver
+    # AutomacaoPortal): cancela e vira ERRO_TECNICO se travar sem
+    # terminar, em vez de bloquear pra sempre o único slot da fila
+    # (prefetch=1) até alguém perceber e reiniciar o container manualmente.
+    timeout_execucao_segundos = 300
 
     async def preencher_e_emitir(self, page, pedido: PedidoCertidao) -> ResultadoEmissao:
         pdfs_antes = self._listar_pdfs_downloads()

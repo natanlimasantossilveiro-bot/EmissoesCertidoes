@@ -71,6 +71,14 @@ class MptCertidaoNegativa(AutomacaoNodriverBase):
     url_inicial = "https://prt9.mpt.mp.br/servicos/certidao-positiva-negativa"
     espera_inicial_segundos = 4
     browser_args_extra = [f"--user-agent={UA_CHROME_REAL}"]
+    # Mesma proteção genérica aplicada no TST CNDT (17/09/2026, ver
+    # AutomacaoPortal): cancela e vira ERRO_TECNICO se travar sem
+    # terminar, em vez de bloquear pra sempre o único slot da fila
+    # (prefetch=1). Limite maior que o padrão (300s) porque esse worker já
+    # tem seu próprio loop de até 3 tentativas de captcha (reCAPTCHA
+    # Enterprise, taxa de sucesso baixa, ver _resolver_captcha_com_retentativas)
+    # que sozinho já pode legitimamente passar de 300s.
+    timeout_execucao_segundos = 600
 
     async def preencher_e_emitir(self, page, pedido: PedidoCertidao) -> ResultadoEmissao:
         await self._aceitar_cookies_se_existir(page)

@@ -92,6 +92,11 @@ from certidoes_core.automacao.nodriver_base import AutomacaoNodriverBase
 class CuritibaCertidaoCadastroImovel(AutomacaoNodriverBase):
     portal = "curitiba_certidao_cadastro_imovel"
     url_inicial = "https://declaracaounificadaimovel.curitiba.pr.gov.br/"
+    # Mesma proteção genérica aplicada no TST CNDT (17/09/2026, ver
+    # AutomacaoPortal): cancela e vira ERRO_TECNICO se travar sem
+    # terminar, em vez de bloquear pra sempre o único slot da fila
+    # (prefetch=1) até alguém perceber e reiniciar o container manualmente.
+    timeout_execucao_segundos = 300
 
     async def preencher_e_emitir(self, page, pedido: PedidoCertidao) -> ResultadoEmissao:
         pdfs_antes = self._listar_pdfs_downloads()

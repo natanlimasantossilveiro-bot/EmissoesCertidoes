@@ -108,6 +108,11 @@ class AtendeNetPinhaisCnd(AutomacaoNodriverBase):
     portal = "atendenet_pinhais_cnd"
     url_inicial = "https://pinhais.atende.net/autoatendimento/servicos/certidao-negativa-de-debitos/detalhar/1"
     espera_inicial_segundos = 5  # SPA da plataforma Atende.Net é mais pesada que os ASP.NET clássicos
+    # Mesma proteção genérica aplicada no TST CNDT (17/09/2026, ver
+    # AutomacaoPortal): cancela e vira ERRO_TECNICO se travar sem
+    # terminar, em vez de bloquear pra sempre o único slot da fila
+    # (prefetch=1) até alguém perceber e reiniciar o container manualmente.
+    timeout_execucao_segundos = 300
 
     async def preencher_e_emitir(self, page, pedido: PedidoCertidao) -> ResultadoEmissao:
         # Precisa ser registrado ANTES do clique em "Confirmar" — o
