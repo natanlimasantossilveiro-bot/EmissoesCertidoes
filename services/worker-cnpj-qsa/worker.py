@@ -196,7 +196,11 @@ class CnpjQsa(AutomacaoNodriverBase):
             return {"status": "erro_portal", "mensagem": texto[:1000] or "A Receita Federal recusou a solicitação."}
         if "comprovante" in texto_lower and ("gerad" in texto_lower or "emitid" in texto_lower):
             return {"status": "certidao_emitida", "mensagem": "Comprovante de inscrição e situação cadastral gerado."}
-        return {"status": "resultado_indefinido", "mensagem": texto[:1000] or "Resultado não identificado."}
+        # ⚠️ Corrigido (auditoria de 17/09/2026): conteúdo não reconhecido
+        # (bloqueio, timeout do Angular, erro genérico da Receita) caía no
+        # "sucesso provável" padrão de _determinar_status_final, reportando
+        # qualquer tela desconhecida como se fosse o comprovante.
+        return {"status": "erro_tecnico", "mensagem": texto[:1000] or "Resultado não identificado (página sem conteúdo reconhecível)."}
 
     @staticmethod
     def _determinar_status_final(status_emissao: str) -> StatusPedido:
@@ -206,6 +210,8 @@ class CnpjQsa(AutomacaoNodriverBase):
             return StatusPedido.ERRO_TECNICO
         if status_emissao == "erro_portal":
             return StatusPedido.ERRO_PORTAL
+        if status_emissao == "erro_tecnico":
+            return StatusPedido.ERRO_TECNICO
         return StatusPedido.SUCESSO_PROVAVEL
 
 
