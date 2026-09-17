@@ -15,6 +15,7 @@ from abc import abstractmethod
 from pathlib import Path
 
 import nodriver as nd
+import psutil
 
 from certidoes_core.config import config
 from certidoes_core.banco import PedidoCertidao, StatusPedido
@@ -134,6 +135,30 @@ HOOK_SCRIPT_TURNSTILE_CALLBACK = """
 """
 
 
+def _matar_chrome_orfao_do_perfil(pasta_perfil: str):
+    # ⚠️ Vazamento real confirmado em produção (17/09/2026, worker TST CNDT
+    # chegou a 677 processos/1.46GB de RAM após só 2 pedidos): quando
+    # `nd.start()` não completa o handshake CDP a tempo (ex: sistema sob
+    # carga no momento exato do lançamento), a própria lib nodriver já tinha
+    # criado o processo do Chrome de verdade (asyncio.create_subprocess_exec,
+    # ver nodriver/core/browser.py) — e levanta a exceção sem nunca matar
+    # esse processo. Cada tentativa usa um `user_data_dir` próprio e único
+    # (ver `executar()` abaixo), então achamos e matamos pelo próprio
+    # caminho do perfil no cmdline — o Chromium propaga esse argumento pra
+    # todos os processos filhos (renderer, GPU, zygote), então isso cobre a
+    # árvore inteira sem precisar do PID que a exceção não devolve.
+    try:
+        for processo in psutil.process_iter(["cmdline"]):
+            try:
+                cmdline = processo.info["cmdline"] or []
+                if any(pasta_perfil in parte for parte in cmdline):
+                    processo.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+    except Exception as erro:
+        print(f"[nodriver_base] Falha ao limpar Chrome órfão de {pasta_perfil}: {erro}")
+
+
 class AutomacaoNodriverBase(AutomacaoPortal):
     url_inicial: str
     browser_args_extra: list = []
@@ -180,12 +205,22 @@ class AutomacaoNodriverBase(AutomacaoPortal):
         # (86GB). Controlando o diretório nós mesmos, garantimos a limpeza
         # no `finally`, mesmo se o worker travar/der erro no meio.
         pasta_perfil_temporario = tempfile.mkdtemp(prefix="nodriver_perfil_")
-        browser = await nd.start(
-            headless=config.BROWSER_HEADLESS,
-            browser_args=browser_args,
-            browser_executable_path=self.browser_executable_path,
-            user_data_dir=pasta_perfil_temporario,
-        )
+        try:
+            browser = await nd.start(
+                headless=config.BROWSER_HEADLESS,
+                browser_args=browser_args,
+                browser_executable_path=self.browser_executable_path,
+                user_data_dir=pasta_perfil_temporario,
+            )
+        except Exception:
+            # Ver aviso em _matar_chrome_orfao_do_perfil: se nd.start() falhar
+            # (ex: "Failed to connect to browser"), o processo do Chrome já
+            # foi criado e precisa ser limpo manualmente antes de propagar o
+            # erro — senão vaza memória/processos a cada tentativa que falhar
+            # assim, mesmo com o worker se recuperando normalmente via retry.
+            _matar_chrome_orfao_do_perfil(pasta_perfil_temporario)
+            shutil.rmtree(pasta_perfil_temporario, ignore_errors=True)
+            raise
         try:
             page = await browser.get("about:blank")
             # A flag `--download-directory` (acima) não é mais respeitada

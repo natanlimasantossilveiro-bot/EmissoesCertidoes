@@ -11,5 +11,6 @@ setup(
         "pymysql>=1.1.0",
         "cryptography>=42.0.0",  # exigido pelo pymysql para o auth caching_sha2_password do MySQL 8
         "boto3>=1.34.0",  # só necessário se STORAGE_BACKEND=s3
+        "psutil>=5.9.0",  # AutomacaoNodriverBase usa pra matar Chrome órfão quando nd.start() falha
     ],
 )
