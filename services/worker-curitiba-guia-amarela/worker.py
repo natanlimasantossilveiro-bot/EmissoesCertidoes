@@ -316,13 +316,17 @@ class CuritibaGuiaAmarela(AutomacaoNodriverBase):
                 "mensagem": "Formulário voltou em branco após o envio — provável captcha incorreto (esse site não mostra erro visível, só reseta a página).",
             }
 
-        return {"status": "resultado_indefinido", "mensagem": texto[:1000] or "Resultado não identificado."}
+        # ⚠️ Corrigido (auditoria de 17/09/2026): nenhum dos marcadores
+        # conhecidos (sucesso, erro de captcha, indicação fiscal inválida)
+        # apareceu — provável bloqueio/mudança no site, não sucesso. Antes
+        # caía no "sucesso provável" padrão de _determinar_status_final.
+        return {"status": "erro_tecnico", "mensagem": texto[:1000] or "Resultado não identificado (página sem conteúdo reconhecível)."}
 
     @staticmethod
     def _determinar_status_final(status_emissao: str) -> StatusPedido:
         if status_emissao == "consulta_emitida":
             return StatusPedido.SUCESSO_CONFIRMADO
-        if status_emissao in ("erro_captcha", "erro_tecnico_timeout"):
+        if status_emissao in ("erro_captcha", "erro_tecnico_timeout", "erro_tecnico"):
             return StatusPedido.ERRO_TECNICO
         if status_emissao == "erro_portal":
             return StatusPedido.ERRO_PORTAL

@@ -290,7 +290,8 @@ class AtendeNetPinhaisCnd(AutomacaoNodriverBase):
         if "não possui cadastro único ativo" in texto_lower:
             return {
                 "status": "nao_encontrado",
-                "mensagem": "CPF/CNPJ não possui cadastro único ativo na prefeitura de Pinhais.",
+                "mensagem": "CPF/CNPJ não possui cadastro único ativo na prefeitura de Pinhais — "
+                            "não há certidão a emitir por esse fluxo.",
             }
 
         if "cpf/cnpj" in texto_lower and "inválido" in texto_lower:
@@ -300,11 +301,19 @@ class AtendeNetPinhaisCnd(AutomacaoNodriverBase):
 
     @staticmethod
     def _determinar_status_final(status_emissao: str) -> StatusPedido:
-        if status_emissao == "nao_encontrado":
-            return StatusPedido.SUCESSO_CONFIRMADO
-        if status_emissao == "erro_portal":
+        # ⚠️ Corrigido (auditoria de 17/09/2026): "nao_encontrado" virava
+        # SUCESSO_CONFIRMADO direto — mas esse ramo só é alcançado quando a
+        # interceptação de rede NÃO capturou nenhum PDF real (ver
+        # preencher_e_emitir), ou seja, "sucesso confirmado" sem nenhum
+        # documento anexado e sem a evidência automática que só dispara pra
+        # resultado não-confirmado. Rebaixado pra erro_portal (rejeição
+        # definitiva do portal, não é falha técnica retomável, mas também
+        # não é uma certidão emitida).
+        if status_emissao in ("nao_encontrado", "erro_portal"):
             return StatusPedido.ERRO_PORTAL
         if status_emissao == "bloqueio_ambiente":
+            return StatusPedido.ERRO_TECNICO
+        if status_emissao == "resultado_indefinido":
             return StatusPedido.ERRO_TECNICO
         return StatusPedido.SUCESSO_PROVAVEL
 
