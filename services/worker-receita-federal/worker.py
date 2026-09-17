@@ -107,6 +107,15 @@ class CertidaoConjunta(AutomacaoNodriverBase):
 
         await self._clicar_botao_emitir(page)
         resultado_bruto = await self._verificar_resultado_emissao(page)
+        if resultado_bruto["status"] == "clicou_emitir_nova_certidao":
+            # ⚠️ Corrigido (auditoria de 17/09/2026): esse status só significa
+            # que o botão "Emitir Nova Certidão" foi clicado — antes, isso já
+            # virava SUCESSO_CONFIRMADO direto, sem checar se a emissão de
+            # fato aconteceu (a leitura do texto da página é da tela ANTERIOR
+            # ao clique, capturada no mesmo evaluate). Espera a navegação/
+            # re-render e checa o resultado real antes de decidir o status.
+            await page.wait(3)
+            resultado_bruto = await self._verificar_resultado_pos_clique(page)
         status_final = self._determinar_status_final(resultado_bruto["status"])
 
         caminho_certidao = ""
@@ -230,56 +239,84 @@ class CertidaoConjunta(AutomacaoNodriverBase):
             await page.wait(1)
         return ""
 
+    # Compartilhado entre a checagem inicial e a checagem pós-clique em
+    # "Emitir Nova Certidão" — mesmos sinais de erro/sucesso, evita duplicar
+    # os textos reconhecidos em dois lugares.
+    _JS_CHECAR_ERRO_OU_SUCESSO = """
+        function checarErroOuSucesso(bodyText) {
+            if (bodyText.includes('Não foi possível concluir a ação')) {
+                return {status: 'erro_receita', mensagem: 'A Receita Federal retornou erro.'};
+            }
+            if (bodyText.includes('insuficientes') && bodyText.includes('pela Internet')) {
+                // Recusa de negócio legítima da própria Receita (comum em
+                // CNPJ com cadastro incompleto) — confirmado em teste real.
+                // Sem esse reconhecimento, cai no "resultado_indefinido", o
+                // que confunde quem revisa depois: parece que "meio que
+                // funcionou" quando na verdade foi uma recusa clara e
+                // definitiva.
+                return {status: 'erro_receita', mensagem: 'Informações insuficientes na Receita Federal para emitir a certidão pela Internet (cadastro incompleto do contribuinte).'};
+            }
+            if (bodyText.includes('Certidão emitida')) {
+                return {status: 'certidao_emitida', mensagem: 'Certidão emitida com sucesso.'};
+            }
+            return null;
+        }
+    """
+
     async def _verificar_resultado_emissao(self, page):
         # page.evaluate() devolve objetos JS via CDP DeepSerializedValue (uma
         # lista de pares [chave, valor], não um dict) — por isso serializamos
         # pra JSON no lado do JS e desserializamos no lado do Python, evitando
         # depender do formato interno do protocolo.
-        resultado_json = await page.evaluate("""
-            (() => {
+        resultado_json = await page.evaluate(f"""
+            (() => {{
+                {self._JS_CHECAR_ERRO_OU_SUCESSO}
                 const bodyText = document.body.innerText;
-                let resultado;
-                if (bodyText.includes('Certidão Válida Encontrada')) {
+                let resultado = checarErroOuSucesso(bodyText);
+                if (!resultado && bodyText.includes('Certidão Válida Encontrada')) {{
                     const botoes = Array.from(document.querySelectorAll('button'));
                     const botao = botoes.find(b => b.innerText.includes('Emitir Nova Certidão'));
-                    if (botao) {
+                    if (botao) {{
                         botao.click();
-                        resultado = {status: 'emitindo_nova_certidao', mensagem: 'Certidão válida encontrada.'};
-                    }
-                }
-                if (!resultado && bodyText.includes('Não foi possível concluir a ação')) {
-                    resultado = {status: 'erro_receita', mensagem: 'A Receita Federal retornou erro.'};
-                }
-                if (!resultado && bodyText.includes('insuficientes') && bodyText.includes('pela Internet')) {
-                    // Recusa de negócio legítima da própria Receita (comum em
-                    // CNPJ com cadastro incompleto) — confirmado em teste real.
-                    // Sem esse reconhecimento, cai no "resultado_indefinido"
-                    // (sucesso_provável), o que confunde quem revisa depois:
-                    // parece que "meio que funcionou" quando na verdade foi
-                    // uma recusa clara e definitiva.
-                    resultado = {status: 'erro_receita', mensagem: 'Informações insuficientes na Receita Federal para emitir a certidão pela Internet (cadastro incompleto do contribuinte).'};
-                }
-                if (!resultado && bodyText.includes('Certidão emitida')) {
-                    resultado = {status: 'certidao_emitida', mensagem: 'Certidão emitida com sucesso.'};
-                }
-                if (!resultado) {
-                    resultado = {status: 'resultado_indefinido', mensagem: 'Resultado não identificado.'};
-                }
+                        resultado = {{status: 'clicou_emitir_nova_certidao', mensagem: 'Certidão válida encontrada — clicando em "Emitir Nova Certidão".'}};
+                    }}
+                }}
+                if (!resultado) {{
+                    resultado = {{status: 'resultado_indefinido', mensagem: 'Resultado não identificado.'}};
+                }}
                 return JSON.stringify(resultado);
-            })()
+            }})()
         """)
         resultado = json.loads(resultado_json)
         await page.wait(2)
         return resultado
 
+    async def _verificar_resultado_pos_clique(self, page) -> dict:
+        # Reavalia o texto da página DEPOIS de esperar a navegação/re-render
+        # causada pelo clique em "Emitir Nova Certidão" (ver aviso em
+        # preencher_e_emitir) — não clica de novo, só confirma o que
+        # realmente aconteceu.
+        resultado_json = await page.evaluate(f"""
+            (() => {{
+                {self._JS_CHECAR_ERRO_OU_SUCESSO}
+                const resultado = checarErroOuSucesso(document.body.innerText) || {{status: 'resultado_indefinido', mensagem: 'Resultado não identificado após clicar em "Emitir Nova Certidão".'}};
+                return JSON.stringify(resultado);
+            }})()
+        """)
+        return json.loads(resultado_json)
+
     @staticmethod
     def _determinar_status_final(status_emissao: str) -> StatusPedido:
-        if status_emissao in ["emitindo_nova_certidao", "certidao_emitida"]:
+        if status_emissao == "certidao_emitida":
             return StatusPedido.SUCESSO_CONFIRMADO
         if status_emissao == "erro_receita":
             return StatusPedido.ERRO_PORTAL
         if status_emissao == "resultado_indefinido":
-            return StatusPedido.SUCESSO_PROVAVEL
+            # ⚠️ Corrigido (auditoria de 17/09/2026): antes era sucesso
+            # provável — nenhum sinal de sucesso nem de erro reconhecido
+            # (bloqueio, timeout, mudança no site) não é evidência de
+            # sucesso. Erro técnico, disponível pra nova tentativa.
+            return StatusPedido.ERRO_TECNICO
         return StatusPedido.FALHA_INDEFINIDA
 
 

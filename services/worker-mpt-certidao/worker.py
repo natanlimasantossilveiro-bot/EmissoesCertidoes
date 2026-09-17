@@ -216,7 +216,13 @@ class MptCertidaoNegativa(AutomacaoNodriverBase):
             return {"status": "certidao_emitida", "mensagem": "Certidão de feitos gerada (com registro)."}
         if "informe o cnpj ou o cpf" in texto_lower or ("documento" in texto_lower and "inválid" in texto_lower):
             return {"status": "erro_portal", "mensagem": "Documento rejeitado pelo portal."}
-        return {"status": "resultado_indefinido", "mensagem": texto[:1000] or "Resultado não identificado."}
+        # ⚠️ Corrigido (auditoria de 17/09/2026): o formulário navegou de
+        # verdade (confirmado pela URL), mas nenhum texto reconhecido
+        # apareceu — não há aqui nenhum "resultado alternativo real"
+        # documentado (como no CPF/Situação Cadastral), então é conteúdo
+        # genuinamente não identificado. Antes caía no "sucesso provável"
+        # padrão de _determinar_status_final.
+        return {"status": "erro_tecnico", "mensagem": texto[:1000] or "Resultado não identificado (página sem conteúdo reconhecível)."}
 
     @staticmethod
     def _determinar_status_final(status_emissao: str) -> StatusPedido:
