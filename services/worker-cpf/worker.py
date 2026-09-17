@@ -147,20 +147,36 @@ class CpfSituacaoCadastral(AutomacaoNodriverBase):
             return {"status": "certidao_emitida", "mensagem": texto[:1000] or "Comprovante de situação cadastral gerado."}
         if "anti-rob" in texto_lower and ("não foi preenchido" in texto_lower or "expirou" in texto_lower):
             return {"status": "erro_captcha", "mensagem": "Falha ao validar o Anti-Robô (hCaptcha)."}
+        # Container real do comprovante presente, mas sem o texto "REGULAR"
+        # confirmado acima — provável status alternativo nunca catalogado
+        # (irregular/suspenso/cancelado/titular falecido etc., ver aviso no
+        # topo do arquivo). É um resultado real da Receita, não uma página
+        # em branco/bloqueada — mantido como sucesso provável pra revisão
+        # humana pela evidência, não erro técnico (que geraria retry inútil).
+        if "situação cadastral" in texto_lower:
+            return {"status": "resultado_alternativo", "mensagem": texto[:1000] or "Situação cadastral não reconhecida — conferir evidência."}
 
         url_atual = (page.url or "").lower().rstrip("/")
         if "error=" in url_atual or url_atual.endswith("consultapublica.asp"):
             return {"status": "erro_portal", "mensagem": texto[:1000] or "A Receita Federal recusou a solicitação."}
-        return {"status": "resultado_indefinido", "mensagem": texto[:1000] or "Resultado não identificado."}
+        # ⚠️ Corrigido (auditoria de 17/09/2026): nenhum sinal reconhecível
+        # (nem comprovante, nem erro de captcha, nem redirecionamento de
+        # erro) — provável bloqueio/timeout/página em branco, não sucesso.
+        # Antes caía no "sucesso provável" padrão de _determinar_status_final.
+        return {"status": "erro_tecnico", "mensagem": texto[:1000] or "Resultado não identificado (página sem conteúdo reconhecível)."}
 
     @staticmethod
     def _determinar_status_final(status_emissao: str) -> StatusPedido:
         if status_emissao == "certidao_emitida":
             return StatusPedido.SUCESSO_CONFIRMADO
+        if status_emissao == "resultado_alternativo":
+            return StatusPedido.SUCESSO_PROVAVEL
         if status_emissao == "erro_captcha":
             return StatusPedido.ERRO_TECNICO
         if status_emissao == "erro_portal":
             return StatusPedido.ERRO_PORTAL
+        if status_emissao == "erro_tecnico":
+            return StatusPedido.ERRO_TECNICO
         return StatusPedido.SUCESSO_PROVAVEL
 
 
