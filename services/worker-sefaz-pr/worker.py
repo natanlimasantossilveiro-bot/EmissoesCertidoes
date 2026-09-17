@@ -149,7 +149,12 @@ class SefazPrCertidaoDebitos(AutomacaoNodriverBase):
         if "consultas automatizadas" in texto_lower or "não podemos processar sua solicitação" in texto_lower:
             return {"status": "bloqueio_automacao", "mensagem": texto[:500]}
 
-        return {"status": "resultado_indefinido", "mensagem": texto[:1000] or "Resultado não identificado."}
+        # ⚠️ Corrigido (auditoria de 17/09/2026): conteúdo não reconhecido
+        # (bloqueio por fingerprint diferente do texto já catalogado,
+        # timeout, mudança no site) caía no "sucesso provável" padrão de
+        # _determinar_status_final, reportando qualquer tela desconhecida
+        # como se fosse a certidão.
+        return {"status": "erro_tecnico", "mensagem": texto[:1000] or "Resultado não identificado (página sem conteúdo reconhecível)."}
 
     @staticmethod
     def _determinar_status_final(status_emissao: str) -> StatusPedido:
@@ -158,6 +163,8 @@ class SefazPrCertidaoDebitos(AutomacaoNodriverBase):
         if status_emissao == "erro_portal":
             return StatusPedido.ERRO_PORTAL
         if status_emissao == "bloqueio_automacao":
+            return StatusPedido.ERRO_TECNICO
+        if status_emissao == "erro_tecnico":
             return StatusPedido.ERRO_TECNICO
         return StatusPedido.SUCESSO_PROVAVEL
 
