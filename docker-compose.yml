@@ -39,6 +39,12 @@ services:
       context: .
       dockerfile: services/gateway/Dockerfile
     restart: unless-stopped
+    # `init: true` em todo serviço da aplicação: sem um init de verdade, o
+    # processo Python vira o PID 1 do container e nunca "recolhe" os
+    # processos filhos do Chromium que terminam — confirmado no VPS em
+    # 29/09/2026 com 136 processos zumbis acumulados por container (alguns
+    # de 10 dias atrás), até o Chrome não conseguir mais abrir.
+    init: true
     ports:
       - "127.0.0.1:8001:8000"
     environment:
@@ -107,6 +113,7 @@ services:
       context: .
       dockerfile: services/cleanup-evidencias/Dockerfile
     restart: unless-stopped
+    init: true
     environment:
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
       RETENCAO_EVIDENCIAS_HORAS: "72"
@@ -145,6 +152,7 @@ services:
       context: .
       dockerfile: services/worker-receita-federal/Dockerfile
     restart: unless-stopped
+    init: true
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -168,6 +176,7 @@ services:
       context: .
       dockerfile: services/worker-cpf/Dockerfile
     restart: unless-stopped
+    init: true
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -190,6 +199,7 @@ services:
       context: .
       dockerfile: services/worker-cnpj-qsa/Dockerfile
     restart: unless-stopped
+    init: true
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -212,6 +222,7 @@ services:
       context: .
       dockerfile: services/worker-tst-cndt/Dockerfile
     restart: unless-stopped
+    init: true
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -234,6 +245,7 @@ services:
       context: .
       dockerfile: services/worker-trf4-certidao/Dockerfile
     restart: unless-stopped
+    init: true
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -256,6 +268,7 @@ services:
       context: .
       dockerfile: services/worker-curitiba-cadastro-imovel/Dockerfile
     restart: unless-stopped
+    init: true
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -278,6 +291,7 @@ services:
       context: .
       dockerfile: services/worker-curitiba-debitos-divida-ativa/Dockerfile
     restart: unless-stopped
+    init: true
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -300,6 +314,7 @@ services:
       context: .
       dockerfile: services/worker-sefaz-pr/Dockerfile
     restart: unless-stopped
+    init: true
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -322,6 +337,7 @@ services:
       context: .
       dockerfile: services/worker-atendenet-pinhais/Dockerfile
     restart: unless-stopped
+    init: true
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -343,6 +359,7 @@ services:
       context: .
       dockerfile: services/worker-fgts-caixa/Dockerfile
     restart: unless-stopped
+    init: true
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -364,6 +381,7 @@ services:
       context: .
       dockerfile: services/worker-mpf-certidao/Dockerfile
     restart: unless-stopped
+    init: true
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -386,6 +404,7 @@ services:
       context: .
       dockerfile: services/worker-curitiba-cnd-cpf/Dockerfile
     restart: unless-stopped
+    init: true
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -407,6 +426,7 @@ services:
       context: .
       dockerfile: services/worker-curitiba-certidao-tributos-imovel/Dockerfile
     restart: unless-stopped
+    init: true
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -428,6 +448,7 @@ services:
       context: .
       dockerfile: services/worker-trt9-certidao/Dockerfile
     restart: unless-stopped
+    init: true
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -450,6 +471,7 @@ services:
       context: .
       dockerfile: services/worker-mpt-certidao/Dockerfile
     restart: unless-stopped
+    init: true
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -472,6 +494,7 @@ services:
       context: .
       dockerfile: services/worker-curitiba-guia-amarela/Dockerfile
     restart: unless-stopped
+    init: true
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes
@@ -494,6 +517,7 @@ services:
       context: .
       dockerfile: services/worker-curitiba-cnd-cnpj/Dockerfile
     restart: unless-stopped
+    init: true
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/certidoes

@@ -4,17 +4,18 @@ gravar no banco com status PENDENTE, e publicar na fila do portal certo.
 Nunca abre navegador nem espera o resultado — por isso responde rápido
 mesmo com fila cheia.
 """
+import re
 from pathlib import Path
 from datetime import datetime, timezone
 from pydantic import BaseModel, EmailStr
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Response, Depends
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Response, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from certidoes_core.banco import (
     get_session, criar_tabelas, PedidoCertidao, LotePlanilha, StatusPedido, Usuario, PapelUsuario,
 )
-from certidoes_core.fila import publicar_pedido
+from certidoes_core.fila import publicar_pedidos
 from certidoes_core.nomenclatura import gerar_nome_certidao
 
 from app.planilha import ler_planilha_certidoes  # parser adaptado, ver services/gateway/app/planilha.py
@@ -22,7 +23,7 @@ from app.relatorio import gerar_relatorio_lote  # ver services/gateway/app/relat
 from app.dlq import status_dlq_todos_portais  # ver services/gateway/app/dlq.py
 from app.auth import (
     autenticar, criar_token, obter_usuario_atual, exigir_admin,
-    gerar_hash_senha, verificar_senha, bootstrap_admin_inicial,
+    gerar_hash_senha, verificar_senha, bootstrap_admin_inicial, validar_forca_senha,
 )
 
 app = FastAPI(title="Certidões Gateway")
@@ -185,8 +186,11 @@ def _usuario_para_json(usuario: Usuario) -> dict:
 
 
 @app.post("/auth/login")
-def login(dados: LoginRequest):
-    usuario = autenticar(dados.email, dados.senha)
+def login(dados: LoginRequest, request: Request):
+    # X-Real-IP é sobrescrito pelo nginx (ver nginx/nginx.conf) — o Gateway
+    # só escuta em 127.0.0.1, então não dá pra forjar vindo de fora.
+    ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "")
+    usuario = autenticar(dados.email, dados.senha, ip)
     return {"access_token": criar_token(usuario), "usuario": _usuario_para_json(usuario)}
 
 
@@ -209,6 +213,7 @@ def trocar_minha_senha(dados: TrocarSenhaRequest, usuario: Usuario = Depends(obt
         usuario_db = session.get(Usuario, usuario.id)
         if not verificar_senha(dados.senha_atual, usuario_db.senha_hash):
             raise HTTPException(401, "Senha atual incorreta.")
+        validar_forca_senha(dados.nova_senha)
         usuario_db.senha_hash = gerar_hash_senha(dados.nova_senha)
         session.commit()
     return {"ok": True}
@@ -231,6 +236,9 @@ class AtualizarUsuarioRequest(BaseModel):
 
 @app.post("/admin/usuarios")
 def criar_usuario(dados: CriarUsuarioRequest, _admin: Usuario = Depends(exigir_admin)):
+    validar_forca_senha(dados.senha)
+    if not dados.nome.strip() or len(dados.nome) > 128:
+        raise HTTPException(400, "Nome é obrigatório (máximo 128 caracteres).")
     with get_session() as session:
         if session.query(Usuario).filter_by(email=dados.email).first():
             raise HTTPException(400, "Já existe um usuário com esse e-mail.")
@@ -255,7 +263,13 @@ def listar_usuarios(_admin: Usuario = Depends(exigir_admin)):
 
 
 @app.patch("/admin/usuarios/{usuario_id}")
-def atualizar_usuario(usuario_id: str, dados: AtualizarUsuarioRequest, _admin: Usuario = Depends(exigir_admin)):
+def atualizar_usuario(usuario_id: str, dados: AtualizarUsuarioRequest, admin: Usuario = Depends(exigir_admin)):
+    # Evita o admin se trancar pra fora (desativando/rebaixando a própria
+    # conta) — se for o único admin, ninguém mais gerencia usuários.
+    if usuario_id == admin.id and (dados.ativo is False or (dados.papel and dados.papel != PapelUsuario.ADMIN)):
+        raise HTTPException(400, "Você não pode desativar nem rebaixar a própria conta.")
+    if dados.nova_senha:
+        validar_forca_senha(dados.nova_senha)
     with get_session() as session:
         usuario = session.get(Usuario, usuario_id)
         if not usuario:
@@ -350,6 +364,51 @@ def consultar_status_dlq(_usuario: Usuario = Depends(obter_usuario_atual)):
 
 # ---------- pedidos ----------
 
+# Documento/data só com dígitos e pontuação comum de CPF/CNPJ/data/
+# Indicação Fiscal. Além de evitar 500 do MySQL com valor maior que a
+# coluna, impede que aspas/HTML cheguem a scripts injetados nos portais
+# (page.evaluate) ou ao innerHTML do front.
+_PADRAO_DOCUMENTO = re.compile(r"^[0-9./\- ]{1,32}$")
+_PADRAO_DATA_OU_DOC = re.compile(r"^[0-9./\- ]{0,20}$")
+_PADRAO_TIPO = re.compile(r"^[a-z]{0,16}$")
+
+
+def _validar_campos_pedido(nome: str, tipo: str | None, documento: str, data_nascimento: str) -> tuple:
+    nome = (nome or "").strip()
+    documento = (documento or "").strip()
+    tipo = (tipo or "").strip().lower() or None
+    data_nascimento = (data_nascimento or "").strip()
+    if not nome or len(nome) > 255:
+        raise HTTPException(400, "Nome é obrigatório (máximo 255 caracteres).")
+    if not _PADRAO_DOCUMENTO.match(documento):
+        raise HTTPException(400, "Documento inválido — use só números e pontuação (máximo 32 caracteres).")
+    if tipo and not _PADRAO_TIPO.match(tipo):
+        raise HTTPException(400, "Tipo inválido.")
+    if not _PADRAO_DATA_OU_DOC.match(data_nascimento):
+        raise HTTPException(400, "Data de nascimento/documento do proprietário em formato inválido.")
+    return nome, tipo, documento, data_nascimento
+
+
+def _publicar_pedidos(ids_criados: list[tuple[str, str]]) -> int:
+    """Publica numa conexão só. Se o RabbitMQ estiver fora do ar, os pedidos
+    já gravados como PENDENTE ficariam presos pra sempre sem ninguém saber —
+    marca como ERRO_TECNICO com a explicação, pra aparecer no painel e o
+    colaborador poder reenviar. Devolve quantos falharam."""
+    try:
+        publicar_pedidos(ids_criados)
+        return 0
+    except Exception as erro:
+        print(f"[gateway] Falha ao publicar {len(ids_criados)} pedido(s) na fila: {erro}")
+        with get_session() as session:
+            for _, pedido_id in ids_criados:
+                pedido = session.get(PedidoCertidao, pedido_id)
+                if pedido and pedido.status == StatusPedido.PENDENTE:
+                    pedido.status = StatusPedido.ERRO_TECNICO
+                    pedido.mensagem = "Fila de processamento indisponível no momento do envio — envie o pedido novamente."
+            session.commit()
+        return len(ids_criados)
+
+
 @app.post("/pedidos")
 def criar_pedido_unitario(
     portais: list[str] = Form(...),
@@ -360,9 +419,11 @@ def criar_pedido_unitario(
     usuario: Usuario = Depends(obter_usuario_atual),
 ):
     _validar_portais_mesmo_grupo(portais)
+    nome, tipo, documento, data_nascimento = _validar_campos_pedido(nome, tipo, documento, data_nascimento)
 
     ids_criados = []
     with get_session() as session:
+        pedidos = []
         for portal in portais:
             pedido = PedidoCertidao(
                 portal=portal,
@@ -374,27 +435,51 @@ def criar_pedido_unitario(
                 status=StatusPedido.PENDENTE,
             )
             session.add(pedido)
-            session.commit()
-            session.refresh(pedido)
-            ids_criados.append((portal, pedido.id))
+            pedidos.append((portal, pedido))
+        session.flush()
+        ids_criados = [(portal, pedido.id) for portal, pedido in pedidos]
+        session.commit()
 
     # Publica todos na fila só depois de garantir que gravou tudo no banco
-    for portal, pedido_id in ids_criados:
-        publicar_pedido(portal, pedido_id)
+    falhas = _publicar_pedidos(ids_criados)
+    if falhas:
+        raise HTTPException(503, "Pedido gravado, mas a fila de processamento está indisponível — tente novamente em instantes.")
 
     return {"pedido_ids": [pid for _, pid in ids_criados], "total": len(ids_criados)}
 
 
+# Limites de upload — sem isso, um arquivo gigante (ou um .xlsx "zip bomb")
+# é lido inteiro pra memória do Gateway.
+TAMANHO_MAX_PLANILHA = 10 * 1024 * 1024
+TAMANHO_MAX_CERTIDAO_MANUAL = 20 * 1024 * 1024
+
+
+def _ler_upload_limitado(arquivo: UploadFile, limite: int, rotulo: str) -> bytes:
+    conteudo = arquivo.file.read(limite + 1)
+    if len(conteudo) > limite:
+        raise HTTPException(413, f"{rotulo} maior que o limite de {limite // (1024 * 1024)} MB.")
+    return conteudo
+
+
+# `def` (não `async def`) de propósito: o corpo faz I/O bloqueante (banco,
+# RabbitMQ, parse do .xlsx). Dentro de `async def` isso roda direto no event
+# loop e trava o Gateway inteiro — todo mundo — enquanto a planilha é
+# processada. Como `def`, o FastAPI roda numa thread do pool.
 @app.post("/pedidos/planilha")
-async def criar_pedidos_planilha(
+def criar_pedidos_planilha(
     portais: list[str] = Form(...),
     planilha: UploadFile = File(...),
     usuario: Usuario = Depends(obter_usuario_atual),
 ):
     _validar_portais_mesmo_grupo(portais)
 
-    conteudo = await planilha.read()
-    registros, erros = ler_planilha_certidoes(conteudo)
+    conteudo = _ler_upload_limitado(planilha, TAMANHO_MAX_PLANILHA, "Planilha")
+    try:
+        registros, erros = ler_planilha_certidoes(conteudo)
+    except ValueError as erro:
+        raise HTTPException(400, str(erro))
+    except Exception:
+        raise HTTPException(400, "Não foi possível ler a planilha — confira se é um arquivo .xlsx válido.")
 
     with get_session() as session:
         lote = LotePlanilha(
@@ -414,36 +499,69 @@ async def criar_pedidos_planilha(
         # Cada linha da planilha vira um pedido POR portal marcado — uma
         # planilha com 10 linhas e 3 portais gera 30 pedidos, todos no
         # mesmo lote (pra aparecer junto no relatório/acompanhamento).
-        ids_publicados = []
+        # Um commit só no final (em vez de um por pedido) — com 100 linhas
+        # × 5 portais eram 500 commits seguidos. flush() já atribui os ids.
+        pedidos = []
         for registro in registros:
             for portal in portais:
                 pedido = PedidoCertidao(
                     portal=portal,
-                    nome=registro["nome"],
+                    nome=registro["nome"][:255],
                     tipo=registro.get("tipo"),
-                    documento=registro["documento"],
-                    data_nascimento=registro.get("data_nascimento", ""),
+                    documento=registro["documento"][:32],
+                    data_nascimento=(registro.get("data_nascimento") or "")[:16],
                     lote_id=lote_id_valor,
                     linha_planilha=str(registro["linha"]),
                     usuario_id=usuario.id,
                     status=StatusPedido.PENDENTE,
                 )
                 session.add(pedido)
-                session.commit()
-                session.refresh(pedido)
-                ids_publicados.append((portal, pedido.id))
+                pedidos.append((portal, pedido))
+        session.flush()
+        ids_publicados = [(portal, pedido.id) for portal, pedido in pedidos]
+        session.commit()
 
     # Publica todos na fila só depois de garantir que gravou tudo no banco
-    for portal, pedido_id in ids_publicados:
-        publicar_pedido(portal, pedido_id)
+    falhas = _publicar_pedidos(ids_publicados)
 
     return {
         "lote_id": lote_id_valor,
         "total_validos": len(registros),
         "total_erros_validacao": len(erros),
         "total_pedidos_criados": len(ids_publicados),
+        "total_falhas_fila": falhas,
         "erros": erros,
     }
+
+
+# ⚠️ Tem que ser declarada ANTES de `/pedidos/{pedido_id}`: o FastAPI casa
+# as rotas na ordem de declaração, e "aguardando-manual" também serve como
+# `{pedido_id}` — declarada depois, esta rota nunca era alcançada (sempre
+# 404 "Pedido não encontrado").
+@app.get("/pedidos/aguardando-manual")
+def listar_pedidos_aguardando_manual(_usuario: Usuario = Depends(obter_usuario_atual)):
+    """Pedidos que esgotaram a automação num portal sem solução garantida
+    (ex: SEFAZ-PR — ver AutomacaoPortal.url_fallback_manual) e esperam
+    alguém resolver manualmente no site do portal e anexar o PDF (ver
+    POST /pedidos/{id}/certidao-manual, abaixo)."""
+    with get_session() as session:
+        pedidos = (
+            session.query(PedidoCertidao)
+            .filter_by(status=StatusPedido.AGUARDANDO_MANUAL)
+            .order_by(PedidoCertidao.atualizado_em.desc())
+            .all()
+        )
+        return [
+            {
+                "id": p.id,
+                "portal": p.portal,
+                "nome": p.nome,
+                "documento": p.documento,
+                "mensagem": p.mensagem,
+                "atualizado_em": _marcar_utc(p.atualizado_em),
+            }
+            for p in pedidos
+        ]
 
 
 @app.get("/pedidos/{pedido_id}")
@@ -493,41 +611,16 @@ def baixar_evidencia(pedido_id: str, _usuario: Usuario = Depends(obter_usuario_a
     return _baixar_arquivo_pedido(pedido_id, "url_evidencia", "evidência")
 
 
-@app.get("/pedidos/aguardando-manual")
-def listar_pedidos_aguardando_manual(_usuario: Usuario = Depends(obter_usuario_atual)):
-    """Pedidos que esgotaram a automação num portal sem solução garantida
-    (ex: SEFAZ-PR — ver AutomacaoPortal.url_fallback_manual) e esperam
-    alguém resolver manualmente no site do portal e anexar o PDF (ver
-    POST /pedidos/{id}/certidao-manual, abaixo)."""
-    with get_session() as session:
-        pedidos = (
-            session.query(PedidoCertidao)
-            .filter_by(status=StatusPedido.AGUARDANDO_MANUAL)
-            .order_by(PedidoCertidao.atualizado_em.desc())
-            .all()
-        )
-        return [
-            {
-                "id": p.id,
-                "portal": p.portal,
-                "nome": p.nome,
-                "documento": p.documento,
-                "mensagem": p.mensagem,
-                "atualizado_em": _marcar_utc(p.atualizado_em),
-            }
-            for p in pedidos
-        ]
-
-
 @app.post("/pedidos/{pedido_id}/certidao-manual")
-async def anexar_certidao_manual(
+def anexar_certidao_manual(
     pedido_id: str,
     arquivo: UploadFile = File(...),
     usuario: Usuario = Depends(obter_usuario_atual),
 ):
     """Fecha o ciclo de um pedido AGUARDANDO_MANUAL: alguém resolveu na mão
     no site do portal e anexa o PDF aqui. Só aceito nesse status — evita
-    sobrescrever sem querer o resultado de um pedido automatizado."""
+    sobrescrever sem querer o resultado de um pedido automatizado.
+    `def` (não `async def`) pelo mesmo motivo de criar_pedidos_planilha."""
     with get_session() as session:
         pedido = session.get(PedidoCertidao, pedido_id)
         if not pedido:
@@ -538,7 +631,9 @@ async def anexar_certidao_manual(
                 f"Pedido não está aguardando resolução manual (status atual: {pedido.status.value}).",
             )
 
-        conteudo = await arquivo.read()
+        conteudo = _ler_upload_limitado(arquivo, TAMANHO_MAX_CERTIDAO_MANUAL, "Arquivo")
+        if not conteudo.startswith(b"%PDF"):
+            raise HTTPException(400, "O arquivo anexado não é um PDF.")
         nome_arquivo = gerar_nome_certidao(pedido.nome, pedido.portal, pedido.documento, tipo=pedido.tipo)
         CAMINHO_UPLOADS_MANUAIS.mkdir(parents=True, exist_ok=True)
         caminho_final = CAMINHO_UPLOADS_MANUAIS / nome_arquivo

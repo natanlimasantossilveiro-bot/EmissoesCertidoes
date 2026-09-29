@@ -36,6 +36,15 @@ server {
     # gateway (mesma correção já existente em nginx.conf).
     resolver 127.0.0.11 valid=10s;
 
+    # Mesmo bloco de nginx.conf (limite de upload + cabeçalhos de segurança),
+    # mais HSTS — só faz sentido aqui, com HTTPS já funcionando.
+    client_max_body_size 25m;
+    server_tokens off;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "no-referrer" always;
+
     location / {
         root /usr/share/nginx/html;
         index index.html;

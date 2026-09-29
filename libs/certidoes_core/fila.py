@@ -43,18 +43,32 @@ def publicar_pedido(portal: str, pedido_id: str):
     A mensagem carrega só o ID — o worker busca os dados completos no banco,
     assim evitamos inconsistência entre o que está na fila e o que está no
     banco."""
+    publicar_pedidos([(portal, pedido_id)])
+
+
+def publicar_pedidos(pedidos: list[tuple[str, str]]):
+    """Mesmo que `publicar_pedido`, mas numa conexão só pra lista inteira de
+    (portal, pedido_id) — uma planilha com 100 linhas × 5 portais abria 500
+    conexões seguidas com o RabbitMQ, o suficiente pra estourar o timeout
+    do proxy em planilhas grandes."""
+    if not pedidos:
+        return
     conexao = pika.BlockingConnection(pika.URLParameters(config.RABBITMQ_URL))
     try:
         canal = conexao.channel()
-        canal.queue_declare(queue=_dlq_nome(portal), durable=True)
-        canal.queue_declare(queue=portal, durable=True, arguments=_argumentos_fila(portal))
+        declaradas = set()
+        for portal, pedido_id in pedidos:
+            if portal not in declaradas:
+                canal.queue_declare(queue=_dlq_nome(portal), durable=True)
+                canal.queue_declare(queue=portal, durable=True, arguments=_argumentos_fila(portal))
+                declaradas.add(portal)
 
-        canal.basic_publish(
-            exchange="",
-            routing_key=portal,
-            body=json.dumps({"pedido_id": pedido_id}),
-            properties=pika.BasicProperties(delivery_mode=2, headers={"x-tentativa": 0}),
-        )
+            canal.basic_publish(
+                exchange="",
+                routing_key=portal,
+                body=json.dumps({"pedido_id": pedido_id}),
+                properties=pika.BasicProperties(delivery_mode=2, headers={"x-tentativa": 0}),
+            )
     finally:
         conexao.close()
 
@@ -84,9 +98,16 @@ async def consumir_fila(portal: str, callback, prefetch: int = 1):
 
 
 async def _processar_mensagem(mensagem: aio_pika.IncomingMessage, portal: str, canal, callback):
-    dados = json.loads(mensagem.body)
-    pedido_id = dados["pedido_id"]
-    tentativa = int((mensagem.headers or {}).get("x-tentativa", 0)) + 1
+    try:
+        dados = json.loads(mensagem.body)
+        pedido_id = dados["pedido_id"]
+        tentativa = int((mensagem.headers or {}).get("x-tentativa", 0)) + 1
+    except Exception as erro:
+        # Mensagem malformada derrubava o laço de consumo inteiro (exceção
+        # fora de qualquer try) — o worker parava de processar a fila.
+        print(f"[fila] Mensagem inválida na fila '{portal}', indo para a DLQ: {erro}")
+        await mensagem.reject(requeue=False)
+        return
 
     try:
         if asyncio.iscoroutinefunction(callback):
@@ -107,7 +128,12 @@ async def _processar_mensagem(mensagem: aio_pika.IncomingMessage, portal: str, c
         return
 
     print(f"[fila] Pedido {pedido_id} falhou (tentativa {tentativa}/{config.MAX_TENTATIVAS}) — reenfileirando.")
-    await mensagem.ack()  # remove a entrega atual da fila...
+    # Ordem importa: republica ANTES do ack. Antes era ack → sleep →
+    # publish: se o container reiniciasse durante o backoff (deploy, OOM),
+    # a mensagem já tinha saído da fila e a nova ainda não existia — o
+    # pedido ficava "processando" pra sempre, sem retry nem DLQ. No pior
+    # caso agora (queda entre publish e ack) o pedido roda duas vezes, o
+    # que é recuperável; perder o pedido não era.
     await asyncio.sleep(min(5 * tentativa, 30))  # pequeno backoff antes de tentar de novo
     await canal.default_exchange.publish(
         aio_pika.Message(
@@ -116,4 +142,5 @@ async def _processar_mensagem(mensagem: aio_pika.IncomingMessage, portal: str, c
             delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
         ),
         routing_key=portal,
-    )  # ...e republica com o contador atualizado
+    )  # republica com o contador atualizado...
+    await mensagem.ack()  # ...e só então remove a entrega atual

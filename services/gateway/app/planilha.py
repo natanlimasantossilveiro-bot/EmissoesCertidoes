@@ -77,6 +77,10 @@ def ler_planilha_certidoes(conteudo_bytes: bytes):
             erros_linha.append("tipo deve ser 'pf' ou 'pj'")
         if not documento:
             erros_linha.append("documento é obrigatório")
+        elif not documento.isdigit():
+            erros_linha.append("documento deve conter só números (e pontuação)")
+        if len(nome) > 255:
+            erros_linha.append("nome deve ter no máximo 255 caracteres")
         if tipo == "pf" and len(documento) != 11:
             erros_linha.append("CPF deve conter 11 dígitos")
         if tipo == "pj" and len(documento) != 14:

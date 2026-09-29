@@ -158,6 +158,18 @@ const STORAGE_USUARIO_KEY = "certidoes_usuario";
 
 const el = (id) => document.getElementById(id);
 
+// Mesmo helper de index.html: todo dado do servidor passa por aqui antes de
+// entrar num innerHTML. Esta página roda com token de ADMIN — um nome de
+// pedido com HTML/script aqui dava controle total do sistema.
+function esc(valor) {
+  return String(valor ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function gatewayUrl() {
   const salvo = localStorage.getItem(STORAGE_GATEWAY_KEY);
   const padrao = location.protocol === "file:" ? "http://127.0.0.1:8001" : "";
@@ -215,23 +227,28 @@ function formatarData(iso) {
 }
 
 async function alternarAtivo(usuarioId, ativoAtual) {
-  await fetchAutenticado(`${gatewayUrl()}/admin/usuarios/${usuarioId}`, {
+  const resp = await fetchAutenticado(`${gatewayUrl()}/admin/usuarios/${usuarioId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ativo: !ativoAtual }),
   });
+  if (!resp.ok) {
+    const dados = await resp.json().catch(() => ({}));
+    alert(dados.detail || "Não foi possível alterar esse usuário.");
+  }
   carregarAtividade();
 }
 
 async function resetarSenha(usuarioId) {
   const novaSenha = prompt("Nova senha pra esse usuário (mínimo 8 caracteres):");
   if (!novaSenha) return;
-  await fetchAutenticado(`${gatewayUrl()}/admin/usuarios/${usuarioId}`, {
+  const resp = await fetchAutenticado(`${gatewayUrl()}/admin/usuarios/${usuarioId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ nova_senha: novaSenha }),
   });
-  alert("Senha atualizada.");
+  const dados = await resp.json().catch(() => ({}));
+  alert(resp.ok ? "Senha atualizada." : (dados.detail || "Não foi possível atualizar a senha."));
 }
 
 async function excluirUsuario(usuarioId, nome) {
@@ -263,30 +280,31 @@ async function carregarAtividade() {
   corpo.innerHTML = lista
     .map(({ usuario, total_pedidos, pedidos_recentes }) => `
       <tr>
-        <td>${usuario.nome}</td>
-        <td>${usuario.email}</td>
-        <td><span class="badge ${usuario.papel}">${usuario.papel === "admin" ? "Admin" : "Colaborador"}</span></td>
+        <td>${esc(usuario.nome)}</td>
+        <td>${esc(usuario.email)}</td>
+        <td><span class="badge ${esc(usuario.papel)}">${usuario.papel === "admin" ? "Admin" : "Colaborador"}</span></td>
         <td>${badgeStatus(usuario)}</td>
         <td>${formatarData(usuario.ultimo_acesso_em)}</td>
         <td>
-          ${total_pedidos}
-          ${total_pedidos > 0 ? `<button class="secondary small" onclick="alternarDetalhes('${usuario.id}')">ver</button>` : ""}
+          ${Number(total_pedidos) || 0}
+          ${total_pedidos > 0 ? `<button class="secondary small" data-id="${esc(usuario.id)}" onclick="alternarDetalhes(this.dataset.id)">ver</button>` : ""}
         </td>
         <td class="row-actions">
-          <button class="secondary small" onclick="alternarAtivo('${usuario.id}', ${usuario.ativo})">${usuario.ativo ? "Desativar" : "Ativar"}</button>
-          <button class="secondary small" onclick="resetarSenha('${usuario.id}')">Resetar senha</button>
+          <button class="secondary small" data-id="${esc(usuario.id)}" onclick="alternarAtivo(this.dataset.id, ${usuario.ativo ? "true" : "false"})">${usuario.ativo ? "Desativar" : "Ativar"}</button>
+          <button class="secondary small" data-id="${esc(usuario.id)}" onclick="resetarSenha(this.dataset.id)">Resetar senha</button>
           ${usuario.id === (usuarioAtual() || {}).id ? "" : `
             <button class="secondary small" title="${total_pedidos > 0 ? 'Usuário tem pedidos no histórico — desative em vez de excluir' : ''}"
               ${total_pedidos > 0 ? "disabled" : ""}
-              onclick="excluirUsuario('${usuario.id}', '${usuario.nome.replace(/'/g, "\\'")}')">Excluir</button>
+              data-id="${esc(usuario.id)}" data-nome="${esc(usuario.nome)}"
+              onclick="excluirUsuario(this.dataset.id, this.dataset.nome)">Excluir</button>
           `}
         </td>
       </tr>
-      <tr id="detalhes-${usuario.id}" style="display:none">
+      <tr id="detalhes-${esc(usuario.id)}" style="display:none">
         <td colspan="7">
           <div class="pedidos-recentes">
             ${pedidos_recentes.map(p => `
-              <div><span class="mono">${p.criado_em ? new Date(p.criado_em).toLocaleString("pt-BR") : ""}</span> — ${p.nome} (${p.portal}) — ${p.status}</div>
+              <div><span class="mono">${p.criado_em ? esc(new Date(p.criado_em).toLocaleString("pt-BR")) : ""}</span> — ${esc(p.nome)} (${esc(p.portal)}) — ${esc(p.status)}</div>
             `).join("")}
           </div>
         </td>

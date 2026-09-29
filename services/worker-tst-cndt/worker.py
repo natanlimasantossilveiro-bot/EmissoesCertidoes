@@ -182,7 +182,12 @@ class TstCndt(AutomacaoNodriverBase):
         mensagem = mensagem if isinstance(mensagem, str) else ""
         mensagem_lower = mensagem.lower()
 
-        if "inválido" in mensagem_lower or "captcha" in mensagem_lower or "caracteres" in mensagem_lower:
+        # Captcha errado (2captcha leu a imagem errado) é falha técnica
+        # retentável, não erro do documento — antes caía junto com "CPF
+        # inválido" em erro_portal e o pedido era encerrado sem retry.
+        if "captcha" in mensagem_lower or "caracteres" in mensagem_lower or "imagem" in mensagem_lower:
+            return {"status": "erro_tecnico", "mensagem": f"Captcha rejeitado pelo TST: {mensagem}"}
+        if "inválido" in mensagem_lower:
             return {"status": "erro_portal", "mensagem": mensagem}
         if "débito" in mensagem_lower and ("possui" in mensagem_lower or "consta" in mensagem_lower):
             return {"status": "certidao_positiva", "mensagem": mensagem}

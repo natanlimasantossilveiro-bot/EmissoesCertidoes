@@ -199,9 +199,9 @@ class CertidaoConjunta(AutomacaoNodriverBase):
             (() => {{
                 {self._JS_DEFINIR_VALOR}
                 const campoCpf = document.querySelector('input[name="niContribuinte"]');
-                if (campoCpf) definirValorCampo(campoCpf, "{cpf}");
+                if (campoCpf) definirValorCampo(campoCpf, {json.dumps(cpf or "")});
                 const campoData = document.querySelector('input[name="dataNascimento"]');
-                if (campoData) definirValorCampo(campoData, "{data_nascimento}");
+                if (campoData) definirValorCampo(campoData, {json.dumps(data_nascimento or "")});
             }})()
         """)
         await page.wait(2)
@@ -211,7 +211,7 @@ class CertidaoConjunta(AutomacaoNodriverBase):
             (() => {{
                 {self._JS_DEFINIR_VALOR}
                 const campo = document.querySelector('input[name="niContribuinte"]');
-                if (campo) definirValorCampo(campo, "{cnpj}");
+                if (campo) definirValorCampo(campo, {json.dumps(cnpj or "")});
             }})()
         """)
         await page.wait(2)
