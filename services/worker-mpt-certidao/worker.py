@@ -36,7 +36,9 @@ Mecânica confirmada por inspeção ao vivo (nodriver):
   `title="Consultar"` pra pegar o certo, sem depender do id duplicado.
 - O clique aciona `ValidarTamanhoCampo()`, que troca o `action` do
   formulário e chama `form.submit()` — é uma navegação de página de
-  verdade (POST), não uma chamada AJAX, terminando numa página de
+  verdade (POST), não uma chamada AJAX (desde set/2026 o form tem
+  `target="_blank"`, que o worker troca por `_self` antes de enviar — ver
+  `_clicar_consultar`), terminando numa página de
   "impressão" (`&print=1` na URL) — não é download nativo, então o
   resultado é capturado via `salvar_pagina_como_pdf` (a própria página
   renderizada, igual ao worker do CPF/Situação Cadastral).
@@ -178,8 +180,28 @@ class MptCertidaoNegativa(AutomacaoNodriverBase):
         """)
 
     async def _clicar_consultar(self, page):
+        # ⚠️ Regressão real (site mudou, confirmado em 29/09/2026 lendo o
+        # HTML atual): o <form> ganhou `target="_blank"` — o resultado passou
+        # a abrir numa ABA NOVA, e esta aba (a única que o worker observa)
+        # ficava parada no formulário. Todo pedido caía em "Formulário não
+        # navegou pra fora da página inicial" (6 falhas seguidas nesse dia,
+        # inclusive com o servidor sem carga). Forçar `_self` devolve o
+        # comportamento original: o POST navega nesta mesma aba.
+        #
+        # ⚠️ Segundo defeito, do PRÓPRIO site (mesma data, confirmado com
+        # try/catch direto na página): `ValidarTamanhoCampo()` usa
+        # `$("#g-recaptcha-response")`, mas o site passou a carregar o jQuery
+        # sem o atalho `$` (`typeof $ === "undefined"`, só `jQuery` existe) —
+        # a função morre com "TypeError: $ is not a function" ANTES do
+        # submit, sem alert nem requisição nenhuma. Apontar `$` pro jQuery já
+        # carregado mantém as validações do próprio site intactas.
         await page.evaluate("""
             (() => {
+                if (typeof window.$ !== 'function' && typeof window.jQuery === 'function') {
+                    window.$ = window.jQuery;
+                }
+                const form = document.forms['extratoCertidaonegForm'];
+                if (form) form.target = '_self';
                 const botao = document.querySelector('input[title="Consultar"]');
                 if (botao) botao.onclick();
             })()
@@ -218,12 +240,25 @@ class MptCertidaoNegativa(AutomacaoNodriverBase):
                 }
             return {"status": "erro_tecnico", "mensagem": "Formulário não navegou pra fora da página inicial após o envio."}
 
-        if "nada consta" in texto_lower:
-            return {"status": "certidao_emitida", "mensagem": "Certidão negativa de feitos gerada."}
-        if "consta" in texto_lower:
-            return {"status": "certidao_emitida", "mensagem": "Certidão de feitos gerada (com registro)."}
+        # Redação atual da certidão (confirmada numa emissão real em
+        # 29/09/2026): "NADA FOI ENCONTRADO COM O PARÂMETRO APRESENTADO" —
+        # não contém mais "nada consta", que era o único texto reconhecido
+        # antes. Cuidado: o corpo da certidão NEGATIVA também diz "foram
+        # encontrados os procedimentos abaixo relacionados", então
+        # "encontrado" sozinho não serve pra nada.
+        if "nada foi encontrado" in texto_lower or "nada consta" in texto_lower:
+            return {"status": "certidao_emitida", "mensagem": "Certidão negativa de feitos gerada (nada foi encontrado)."}
+        if "certidão positiva" in texto_lower:
+            return {"status": "certidao_emitida", "mensagem": "Certidão positiva de feitos gerada (com registro) — confira o PDF."}
         if "informe o cnpj ou o cpf" in texto_lower or ("documento" in texto_lower and "inválid" in texto_lower):
             return {"status": "erro_portal", "mensagem": "Documento rejeitado pelo portal."}
+        # Certidão de verdade (tem código de autenticidade), mas com uma
+        # redação de resultado que ainda não está catalogada acima — é uma
+        # resposta real do portal, não conteúdo desconhecido: fica pra
+        # revisão humana em vez de virar erro (mesmo critério do CPF/TRT9).
+        if "certid" in texto_lower and "autenticidade" in texto_lower and "código" in texto_lower:
+            return {"status": "certidao_nao_catalogada",
+                    "mensagem": "Certidão emitida, mas com texto de resultado não catalogado — confira o PDF anexado."}
         # ⚠️ Corrigido (auditoria de 17/09/2026): o formulário navegou de
         # verdade (confirmado pela URL), mas nenhum texto reconhecido
         # apareceu — não há aqui nenhum "resultado alternativo real"
@@ -236,6 +271,8 @@ class MptCertidaoNegativa(AutomacaoNodriverBase):
     def _determinar_status_final(status_emissao: str) -> StatusPedido:
         if status_emissao == "certidao_emitida":
             return StatusPedido.SUCESSO_CONFIRMADO
+        if status_emissao == "certidao_nao_catalogada":
+            return StatusPedido.SUCESSO_PROVAVEL
         if status_emissao == "erro_portal":
             return StatusPedido.ERRO_PORTAL
         if status_emissao == "erro_tecnico":
