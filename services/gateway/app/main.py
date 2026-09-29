@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from certidoes_core.banco import (
     get_session, criar_tabelas, PedidoCertidao, LotePlanilha, StatusPedido, Usuario, PapelUsuario,
 )
+from certidoes_core.config import config
 from certidoes_core.fila import publicar_pedidos
 from certidoes_core.nomenclatura import gerar_nome_certidao
 
@@ -579,6 +580,10 @@ def consultar_pedido(pedido_id: str, _usuario: Usuario = Depends(obter_usuario_a
             "mensagem": pedido.mensagem,
             "caminho_certidao": pedido.caminho_certidao,
             "url_evidencia": pedido.url_evidencia,
+            # Pro painel mostrar "Processando (tentativa 2 de 3)" — sem isso,
+            # 15 min de retentativas pareciam travamento pro colaborador.
+            "tentativas": pedido.tentativas or 0,
+            "max_tentativas": config.MAX_TENTATIVAS,
         }
 
 

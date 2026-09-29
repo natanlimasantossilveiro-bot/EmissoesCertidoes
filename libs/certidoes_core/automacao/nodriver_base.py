@@ -10,7 +10,11 @@ chamar capturar_evidencia() — a base já garante.
 import asyncio
 import base64
 import shutil
+import socket
+import ssl
 import tempfile
+import urllib.error
+import urllib.request
 from abc import abstractmethod
 from pathlib import Path
 
@@ -135,6 +139,40 @@ HOOK_SCRIPT_TURNSTILE_CALLBACK = """
 """
 
 
+TIMEOUT_CHECAGEM_PORTAL_SEGUNDOS = 20
+
+
+def _checar_conexao_portal(url: str) -> str | None:
+    """Só responde "dá pra conectar no portal a partir daqui?". Conservador
+    de propósito: QUALQUER resposta HTTP (até 403/500 de um WAF que barra
+    cliente não-navegador) conta como acessível, e erro de certificado
+    também (vários .gov.br têm cadeia incompleta que o Chrome aceita) —
+    só tempo esgotado, DNS inexistente ou conexão recusada contam como
+    inacessível. Assim um portal que funciona no navegador nunca é barrado
+    por engano aqui."""
+    requisicao = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    contexto = ssl._create_unverified_context()
+    try:
+        with urllib.request.urlopen(requisicao, timeout=TIMEOUT_CHECAGEM_PORTAL_SEGUNDOS, context=contexto):
+            return None
+    except urllib.error.HTTPError:
+        return None
+    except (urllib.error.URLError, OSError) as erro:
+        causa = getattr(erro, "reason", erro)
+        if isinstance(causa, (TimeoutError, socket.timeout)):
+            descricao = f"não respondeu em {TIMEOUT_CHECAGEM_PORTAL_SEGUNDOS}s"
+        elif isinstance(causa, socket.gaierror):
+            descricao = "endereço não encontrado (DNS)"
+        elif isinstance(causa, ConnectionRefusedError):
+            descricao = "recusou a conexão"
+        else:
+            return None
+        return (
+            f"Portal inacessível a partir do servidor ({descricao}) — provável instabilidade do portal "
+            f"ou bloqueio do IP do servidor, não erro do documento. Endereço: {url}"
+        )
+
+
 def _matar_chrome_orfao_do_perfil(pasta_perfil: str):
     # ⚠️ Vazamento real confirmado em produção (17/09/2026, worker TST CNDT
     # chegou a 677 processos/1.46GB de RAM após só 2 pedidos): quando
@@ -181,6 +219,9 @@ class AutomacaoNodriverBase(AutomacaoPortal):
     # caso confirmado no SEFAZ PR: acesso manual no Chrome instalado da
     # máquina passou de primeira, o Chromium do nodriver não.
     browser_executable_path: str = None
+
+    async def verificar_portal_acessivel(self) -> str | None:
+        return await asyncio.to_thread(_checar_conexao_portal, self.url_inicial)
 
     @abstractmethod
     async def preencher_e_emitir(self, page, pedido: PedidoCertidao) -> ResultadoEmissao:

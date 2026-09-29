@@ -35,6 +35,11 @@ class Config:
     # Retry / resiliência
     MAX_TENTATIVAS: int = int(os.getenv("MAX_TENTATIVAS", "3"))
 
+    # Quantos navegadores podem estar abertos AO MESMO TEMPO somando todos
+    # os portais (ver concorrencia.py). 2 = um por núcleo do VPS atual. Os
+    # demais pedidos esperam a vez como "Pendente". 0 = sem limite.
+    MAX_NAVEGADORES_SIMULTANEOS: int = int(os.getenv("MAX_NAVEGADORES_SIMULTANEOS", "2"))
+
     # Limpeza automática (serviço cleanup-evidencias) — prazo em horas antes
     # de considerar um arquivo "antigo". Certidão só é apagada de fato se
     # upload_confirmado estiver True no pedido (ver limpeza_certidoes.py).

@@ -13,11 +13,18 @@ específica dele.
 """
 import asyncio
 from abc import ABC, abstractmethod
+from contextlib import nullcontext
 from dataclasses import dataclass
 
 from certidoes_core.banco import get_session, PedidoCertidao, StatusPedido
+from certidoes_core.concorrencia import vaga_navegador
 from certidoes_core.config import config
 from certidoes_core.nomenclatura import gerar_nome_certidao
+
+
+class PortalInacessivel(Exception):
+    """O portal nem respondeu a uma conexão simples a partir do servidor —
+    não adianta abrir navegador (ver `verificar_portal_acessivel`)."""
 
 
 @dataclass
@@ -67,12 +74,31 @@ class AutomacaoPortal(ABC):
             f"Último resultado da automação: {mensagem_automacao}"
         )
 
+    async def verificar_portal_acessivel(self) -> str | None:
+        """Checagem rápida, ANTES de pegar vaga e abrir navegador. Devolve a
+        explicação se o portal está inacessível a partir do servidor, ou
+        None se deu pra conectar. Default: não checa nada — implementado na
+        camada de plataforma (ver AutomacaoNodriverBase)."""
+        return None
+
     async def processar_pedido(self, pedido_id: str, tentativa: int) -> bool:
         """Callback plugado em certidoes_core.fila.consumir_fila. Retorna
         True (ack) pra qualquer resultado definitivo do portal — mesmo que
         seja erro de negócio — e False (retry/DLQ) só quando algo técnico
         impediu de sequer obter um resultado (e o portal não tem fallback
         manual configurado)."""
+        # Portal fora do alcance (ex: TST bloqueando o IP do VPS em
+        # 29/09/2026) falhava só depois de 3 × 300s de timeout, com a fila
+        # do portal parada e o pedido "processando" por 15 minutos. Agora
+        # falha em segundos, com a causa real, sem ocupar vaga de navegador.
+        motivo_inacessivel = await self.verificar_portal_acessivel()
+
+        # Espera a vaga ANTES de marcar PROCESSANDO: enquanto aguarda a vez
+        # (ver concorrencia.py), o pedido continua "pendente" no painel.
+        async with (nullcontext() if motivo_inacessivel else vaga_navegador(self.portal)):
+            return await self._processar_pedido_com_vaga(pedido_id, tentativa, motivo_inacessivel)
+
+    async def _processar_pedido_com_vaga(self, pedido_id: str, tentativa: int, motivo_inacessivel: str | None) -> bool:
         with get_session() as session:
             pedido = session.get(PedidoCertidao, pedido_id)
             if not pedido:
@@ -86,6 +112,8 @@ class AutomacaoPortal(ABC):
             esgotou_tentativas = tentativa >= config.MAX_TENTATIVAS
 
             try:
+                if motivo_inacessivel:
+                    raise PortalInacessivel(motivo_inacessivel)
                 if self.timeout_execucao_segundos:
                     resultado = await asyncio.wait_for(
                         self.executar(pedido), timeout=self.timeout_execucao_segundos

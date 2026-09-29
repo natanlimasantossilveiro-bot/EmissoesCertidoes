@@ -23,7 +23,7 @@ def _para_horario_local(dt):
     return dt.replace(tzinfo=timezone.utc).astimezone(FUSO_BRASILIA).strftime("%d/%m/%Y %H:%M")
 
 STATUS_LABELS = {
-    "pendente": "Pendente",
+    "pendente": "Na fila",
     "processando": "Processando",
     "sucesso_confirmado": "Sucesso",
     "sucesso_provavel": "Sucesso (provável)",

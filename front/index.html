@@ -1057,9 +1057,18 @@ el("btnEnviarPlanilha").addEventListener("click", async () => {
   }
 });
 
-function badgeStatus(status) {
+function badgeStatus(status, pedido) {
+  // A partir da 2ª tentativa mostra o número dela — sem isso, os até 15
+  // min de retentativas automáticas pareciam travamento no painel.
+  const tentativa = (pedido && pedido.tentativas) || 0;
+  if (status === "processando" && tentativa >= 2) {
+    const max = pedido.max_tentativas || 3;
+    return `<span class="badge processando">${esc(`Processando (tentativa ${tentativa} de ${max})`)}</span>`;
+  }
   const rotulos = {
-    pendente: "Pendente",
+    // Com o limite global de navegadores, "pendente" é literalmente
+    // aguardando a vez na fila do servidor.
+    pendente: "Na fila",
     processando: "Processando",
     sucesso_confirmado: "Sucesso",
     sucesso_provavel: "Sucesso (provável)",
@@ -1215,7 +1224,7 @@ function renderizarTabela(dados) {
         <tr>
           <td><span class="portal-preview" title="${esc(nomePortal(p.portal))}">${esc(nomePortal(p.portal))}</span></td>
           <td>${esc(p.nome || "-")}<br><span class="mono">${esc(p.documento || id.slice(0, 8))}</span></td>
-          <td>${badgeStatus(p.status)}</td>
+          <td>${badgeStatus(p.status, p)}</td>
           <td><span class="mensagem-preview" title="${esc(p.mensagem)}">${esc(mensagem)}</span></td>
           <td>
             ${linkArquivo(p.caminho_certidao, "Certidão", id, "certidao")}

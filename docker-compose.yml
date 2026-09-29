@@ -4,6 +4,13 @@ services:
   rabbitmq:
     image: rabbitmq:3.13-management
     restart: unless-stopped
+    environment:
+      # Padrão do RabbitMQ 3.13: entrega não confirmada há mais de 30 min
+      # derruba o canal. Com o limite global de navegadores (ver
+      # libs/certidoes_core/concorrencia.py), um worker pode segurar o
+      # pedido esperando a vez por mais que isso numa planilha grande —
+      # 6h de folga evita reentrega/duplicação no meio do lote.
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit consumer_timeout 21600000"
     ports:
       - "127.0.0.1:5672:5672"   # protocolo AMQP
       - "127.0.0.1:15672:15672" # painel web (usuário/senha padrão: guest/guest)
