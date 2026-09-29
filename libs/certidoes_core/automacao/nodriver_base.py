@@ -245,23 +245,7 @@ class AutomacaoNodriverBase(AutomacaoPortal):
         # pedido por semanas, isso acumulou dezenas de milhares de pastas
         # (86GB). Controlando o diretório nós mesmos, garantimos a limpeza
         # no `finally`, mesmo se o worker travar/der erro no meio.
-        pasta_perfil_temporario = tempfile.mkdtemp(prefix="nodriver_perfil_")
-        try:
-            browser = await nd.start(
-                headless=config.BROWSER_HEADLESS,
-                browser_args=browser_args,
-                browser_executable_path=self.browser_executable_path,
-                user_data_dir=pasta_perfil_temporario,
-            )
-        except Exception:
-            # Ver aviso em _matar_chrome_orfao_do_perfil: se nd.start() falhar
-            # (ex: "Failed to connect to browser"), o processo do Chrome já
-            # foi criado e precisa ser limpo manualmente antes de propagar o
-            # erro — senão vaza memória/processos a cada tentativa que falhar
-            # assim, mesmo com o worker se recuperando normalmente via retry.
-            _matar_chrome_orfao_do_perfil(pasta_perfil_temporario)
-            shutil.rmtree(pasta_perfil_temporario, ignore_errors=True)
-            raise
+        browser, pasta_perfil_temporario = await self._abrir_navegador(browser_args)
         try:
             page = await browser.get("about:blank")
             # A flag `--download-directory` (acima) não é mais respeitada
@@ -317,6 +301,44 @@ class AutomacaoNodriverBase(AutomacaoPortal):
             # assim, ignore_errors=True garante que nunca derruba o worker.
             await asyncio.sleep(0.5)
             shutil.rmtree(pasta_perfil_temporario, ignore_errors=True)
+
+    # Quantas vezes tentar abrir o Chrome DENTRO da mesma tentativa do
+    # pedido. "Failed to connect to browser" costuma ser só o Chrome
+    # demorando a responder no arranque (confirmado no VPS em 29/09/2026:
+    # os 2 primeiros navegadores logo após um deploy falharam assim e
+    # passaram na retentativa seguinte) — sem isso, cada ocorrência gastava
+    # 1 das MAX_TENTATIVAS do pedido e o mandava pro fim da fila.
+    TENTATIVAS_ABRIR_NAVEGADOR = 2
+
+    async def _abrir_navegador(self, browser_args: list) -> tuple:
+        for tentativa in range(1, self.TENTATIVAS_ABRIR_NAVEGADOR + 1):
+            pasta_perfil_temporario = tempfile.mkdtemp(prefix="nodriver_perfil_")
+            try:
+                browser = await nd.start(
+                    headless=config.BROWSER_HEADLESS,
+                    browser_args=browser_args,
+                    browser_executable_path=self.browser_executable_path,
+                    user_data_dir=pasta_perfil_temporario,
+                )
+                return browser, pasta_perfil_temporario
+            except Exception as erro:
+                # Ver aviso em _matar_chrome_orfao_do_perfil: se nd.start()
+                # falhar, o processo do Chrome já foi criado e precisa ser
+                # limpo manualmente — senão vaza memória/processos a cada
+                # falha assim, mesmo com o worker se recuperando via retry.
+                _matar_chrome_orfao_do_perfil(pasta_perfil_temporario)
+                shutil.rmtree(pasta_perfil_temporario, ignore_errors=True)
+                if tentativa >= self.TENTATIVAS_ABRIR_NAVEGADOR:
+                    raise
+                # A mensagem do nodriver vem emoldurada por linhas de "----";
+                # loga só a primeira linha com conteúdo de verdade.
+                resumo = next(
+                    (linha.strip() for linha in str(erro).splitlines() if linha.strip().strip("-")),
+                    repr(erro),
+                )
+                print(f"[{self.portal}] Chrome não abriu ({resumo}) — tentando de novo em 3s "
+                      f"({tentativa}/{self.TENTATIVAS_ABRIR_NAVEGADOR}).")
+                await asyncio.sleep(3)
 
     # ---------- helpers de download, comuns a qualquer portal via nodriver ----------
 
